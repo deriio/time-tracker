@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "timetrackingbot-481011",
+  "private_key_id": "d6ca4cdb31fe9d7e2b0a92eaf49be6616effb4e4",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDbGA+oNiSsr2Az\nHBjJWfyazRCBM2YfmNyhixcuM3F7PSReeZYHt6U9FUUeSpPvb4Qq6PqTR8r3Z76f\nGNPV0TYfGmMQ0if/EbwRPbeW8gdtGpMHmi004pxrymXZWSSnWZY9eTXRYCd2rLNL\ndH3DLEjokPQ2iFnHV3HFKd5wYLzUOqwyMz05XYgsbrxHKtThanNJ/5Ze33hvdfPl\nDRJ8nh7YeFakb8bdOH+UWypOKgp42yygiNeMBg7QZUPDQ+IYm4PGOJ9bShN7C9tk\ng6ogyZ12GdBVQb5hp8l/NO3ZLn8an7EqgvJjZoIYlV3lfZmsjl7XnPL5fPFr15TA\nbKbkVtfFAgMBAAECggEAG8FBUIOlYzvnUao0SKOt8LVcKyXmAMg2YP+UDO4G6QAO\noKpB85HT7LhKVINJmNo1cdMoVSqR34QkvZZhVZOmicuns5yP5Qvr2XpKTOS1xKBK\ncnrZUbsIak5OVzmn/0xF0F1P0EmgTjQkFYG5IdW1GcMtMNBWoT5mYv4CGBXlLfRR\nvalaPW2CAxR/W2WI9ZEeRzuhrm/eiyA5Z1Flj7A0aNiStporgacHfx4d4CxwdT06\nlIEReqB6GwLc6SqffhzPBNBZCjNcLwYZGb45eRGXNMOdXSBhRNYeWdOy5viRNsgP\njVOq2bU8i6J38gqty1uU5RzShBcVrEQ1vOCOYbuRmQKBgQD6acbFOitFt4RQLxYM\nA76ixsHntq8ZNe82j1USSCSf1Pm3VRTKngU2buUWr+qglvHvsoyzN7oor2cT7Pdw\nzwCcqD9nMp20GpmQtGVHKPiAGv+3/i/lJj+mNlQvA1c13bmCoFbdmope8+ZL/YCI\nNnBD4nYBWKYjuy6/e2BZV3ziPQKBgQDf+2gR8JKoz5IDMlU0E3vLMr3AG4SfHXFa\nxvGBDd5gqahHUR3aAJqpyVSXCx/H0NqDHFNML2tOEP2Sk98I9StmOwweN6mIFxq5\nY/wXZdWP1dii1/PbZjWSAdcYQGpZFYOtQIIe7uRonlnHH46fSysSQ40YpxZ4PETF\n+Q3GaCbMKQKBgQCc99tCXFEttXi6LpnaVCqWrJJ15jziR724bKZ9/D0A96bE9g8/\nZ0iLM35k90bS/WuQvlKWMPN/d1vc0KjWzNtsV8bOsJrMf/QNEhd+QL9sxf/P3QU2\n1gAF935Trftn56HWsR1icfIUzTxqG/EK8Vz0IKup8mDKexY1r2fY+Q9uXQKBgD8H\nNg/mTL7oOkRgA4319Z4Gl1LZ64YC+QT8erVAO9WjqFD5SJcyGFOy7fTbEoReBz9h\n1ybXKTD8ov5+UgLpSt8nuo8+RpyfM8v7kNLcuy4QlTet4VdZ+bUug2K1rbeH0FgO\nkQ83VlsCRG0+OholQueOzsOjMTWAcDHtlazBXjmRAoGAXGbLhGBf3O2b8fnpygj4\ngA4QWTj6G9bvg7VIxFrxDZMJF3+RMGB7R80atxdVZPQ1lRB0a/BBIBxbW7TKsY0G\nxesnMtYr3iQkffy4l2t5Po1dKpXqfuVwM5kZcT1U1hvYLIDkMjt8LgRTnwsMH4bq\nYuhRU5DZH3gQ8NwxX/cM1Z4=\n-----END PRIVATE KEY-----\n",
+  "client_email": "bot-admin@timetrackingbot-481011.iam.gserviceaccount.com",
+  "client_id": "111783213808672062394",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/bot-admin%40timetrackingbot-481011.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

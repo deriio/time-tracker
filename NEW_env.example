@@ -1,0 +1,5 @@
+BOT_TOKEN=your_telegram_bot_token
+GOOGLE_JSON_PATH=service_account.json
+DRIVE_FOLDER_ID=your_drive_folder_id
+TEMPLATE_FILE_ID=1oF8IOwDlLtQ2oW_mqcxV39CIbskMRPF-E8HXX2I9jtE
+ADMIN_IDS=12345678,87654321
