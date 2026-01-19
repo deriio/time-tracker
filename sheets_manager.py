@@ -66,8 +66,9 @@ class GoogleSheetManager:
         """
         Reads users from the 'Config_Users' tab in the MASTER TEMPLATE.
         Returns: 
-           - dict: {normalized_username: real_name}
+           - dict: {normalized_username: real_name} (for auth)
            - list: raw rows for syncing
+           - set: all_names_set (set of all valid names found in column A)
         """
         try:
             # Open the TEMPLATE file directly
@@ -79,24 +80,28 @@ class GoogleSheetManager:
             
             users_cache = {}
             valid_rows = []
+            all_names_set = set()
             
             if not raw_values:
                 logger.warning("Config_Users is empty in Master Template.")
-                return {}, []
+                return {}, [], set()
 
             for row in raw_values:
-                if len(row) >= 2:
+                if len(row) >= 1: # At least name must exist
                     name = row[0].strip()
-                    username = row[1].strip()
-                    
-                    if name and username:
-                        # Normalize: lower case, remove @
-                        norm_username = username.replace("@", "").lower()
-                        users_cache[norm_username] = name
-                        valid_rows.append(row)
+                    if name:
+                        all_names_set.add(name)
+                        
+                    if len(row) >= 2:
+                        username = row[1].strip()
+                        if name and username:
+                            # Normalize: lower case, remove @
+                            norm_username = username.replace("@", "").lower()
+                            users_cache[norm_username] = name
+                            valid_rows.append(row)
             
-            logger.info(f"Loaded {len(users_cache)} users from Master Template.")
-            return users_cache, valid_rows
+            logger.info(f"Loaded {len(users_cache)} users (auth) and {len(all_names_set)} total names from Master Template.")
+            return users_cache, valid_rows, all_names_set
             
         except Exception as e:
             logger.error(f"Failed to load users from template: {e}")
@@ -280,7 +285,7 @@ class GoogleSheetManager:
                     self.update_sheet_headers(new_file_id, now)
                     
                     # 2. Sync Users
-                    users, raw = self.get_users_from_template()
+                    users, raw, _ = self.get_users_from_template()
                     self.sync_users_to_current_month(raw)
                     
                 except Exception as sync_err:

@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 # Initialize dependencies
 sheet_manager = None
 USER_CACHE = {} # Normalized Username -> Full Name
+ALL_NAMES_SET = set() # Set of all valid names
 
 try:
     if not all([BOT_TOKEN, GOOGLE_JSON_PATH, DRIVE_FOLDER_ID, TEMPLATE_FILE_ID]):
@@ -52,11 +53,14 @@ try:
     
     # Initial Cache Load
     logger.info("Loading authorized users from Google Sheet...")
-    USER_CACHE, _ = sheet_manager.get_users_from_template()
-    logger.info(f"Loaded {len(USER_CACHE)} users.")
+    USER_CACHE, _, ALL_NAMES_SET = sheet_manager.get_users_from_template()
+    logger.info(f"Loaded {len(USER_CACHE)} users and {len(ALL_NAMES_SET)} names.")
     
 except Exception as e:
     logger.critical(f"Initialization Failed: {e}")
+
+# Global Constants
+DELEGATE_USERNAMES = ["michael_kostyuhjn", "r2d2kzn"]
 
 # Middleware for Authorization
 class AuthMiddleware(BaseMiddleware):
@@ -91,9 +95,13 @@ class AuthMiddleware(BaseMiddleware):
 
         username = user.username.lower()
         
-        # Check against cache
+        # Check against cache OR Delegates
         if username in USER_CACHE:
              data["user_name"] = USER_CACHE[username]
+             return await handler(event, data)
+        
+        if username in DELEGATE_USERNAMES:
+             data["user_name"] = f"Delegate (@{username})" # Fallback name
              return await handler(event, data)
         
         # Access Denied
@@ -114,14 +122,33 @@ async def handle_photo(message: Message, user_name: str):
     try:
         user_id = message.from_user.id
         username = message.from_user.username
-        logger.info(f"Received photo from {user_name} (@{username})")
+        
+        # Delegate logic (DELEGATE_USERNAMES is global)
+        final_user_name = user_name
+        final_username_log = f"@{username}"
+
+        if username and username.lower() in DELEGATE_USERNAMES:
+            caption = message.caption or ""
+            # Check if any known user's name is in the caption
+            # Sort by length descending to match longest name first (to avoid partial matches if names overlap)
+            # We filter out empty names just in case
+            all_names = sorted([name for name in ALL_NAMES_SET if name], key=len, reverse=True)
+            
+            for name in all_names:
+                if name.lower() in caption.lower():
+                    final_user_name = name
+                    final_username_log = f"@{username} (for {name})"
+                    logger.info(f"Delegate {username} reporting for {name}")
+                    break
+        
+        logger.info(f"Received photo from {final_user_name} ({final_username_log})")
         
         if sheet_manager:
-            # Pass username instead of ID as requested
-            # Note: username exists because AuthMiddleware checked it.
-            sheet_manager.append_log(user_name, user_id, f"@{username}")
+            # Pass final_user_name instead of the sender's own name if delegated
+            sheet_manager.append_log(final_user_name, user_id, final_username_log)
             
-            await message.reply(f"✅ Check-in/out recorded for {user_name} at {sheet_manager._get_moscow_time().strftime('%H:%M')}")
+            time_str = sheet_manager._get_moscow_time().strftime('%H:%M')
+            await message.reply(f"✅ Check-in/out recorded for {final_user_name} at {time_str}")
         else:
             await message.reply("⚠️ System Error: Database connection failed.")
             
@@ -142,15 +169,16 @@ async def handle_update(message: Message):
 
     await message.reply("🔄 Updating users from Master Template...")
     try:
-        global USER_CACHE
+        global USER_CACHE, ALL_NAMES_SET
         # 1. Refresh Cache
-        users_dict, raw_rows = sheet_manager.get_users_from_template()
+        users_dict, raw_rows, all_names_set = sheet_manager.get_users_from_template()
         USER_CACHE = users_dict
+        ALL_NAMES_SET = all_names_set
         
         # 2. Sync to Current Month
         sync_result = sheet_manager.sync_users_to_current_month(raw_rows)
         
-        await message.reply(f"✅ Success.\nCache: {len(USER_CACHE)} users.\nSync: {sync_result}")
+        await message.reply(f"✅ Success.\nCache: {len(USER_CACHE)} users.\nNames: {len(ALL_NAMES_SET)}\nSync: {sync_result}")
         
     except Exception as e:
         await message.reply(f"❌ Update failed: {e}")

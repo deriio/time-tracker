@@ -28,7 +28,7 @@ def main():
                 print("Please download it from Google Cloud Console -> Credentials -> OAuth 2.0 Client IDs")
                 return
 
-            print("Starting login flow...")
+            print("Starting login flow...", flush=True)
             flow = InstalledAppFlow.from_client_secrets_file(
                 "credentials.json", SCOPES
             )
@@ -37,7 +37,7 @@ def main():
         # Save the credentials for the next run
         with open("token.json", "w") as token:
             token.write(creds.to_json())
-            print("Success! 'token.json' has been created.")
+            print("Success! 'token.json' has been created.", flush=True)
 
 if __name__ == "__main__":
     main()
