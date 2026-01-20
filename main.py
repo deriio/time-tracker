@@ -224,7 +224,8 @@ async def handle_setup(message: Message):
         await message.reply("⛔ Admin access required.")
         return
 
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
+    
     import json
     import base64
     
@@ -240,7 +241,6 @@ async def handle_setup(message: Message):
     logger.info(f"DEBUG: User {message.from_user.id} is_super: {is_super}")
     
     # Pass data via URL component - optimized for length
-    import base64
     def b64_safe(data):
         j = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
         return base64.urlsafe_b64encode(j.encode('utf-8')).decode('ascii').rstrip('=')
@@ -259,15 +259,16 @@ async def handle_setup(message: Message):
     final_url = f"{WEBAPP_URL}?{query_str}"
     
     logger.info(f"WebApp URL ready. Super: {is_super}, Final length: {len(final_url)}")
-        
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📸 Отметить Приход/Уход", web_app=WebAppInfo(url=final_url))]
-    ])
+
+    # USE REPLY KEYBOARD (Required for sendData to work!)
+    keyboard = ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="📸 Отметить Приход/Уход", web_app=WebAppInfo(url=final_url))]
+    ], resize_keyboard=True, one_time_keyboard=False)
     
     msg = await message.answer(
         "🕐 **Учёт Рабочего Времени**\n\n"
-        "Нажмите кнопку ниже, чтобы начать.\n"
-        "⚠️ Требуется доступ к камере.",
+        "Кнопка для запуска теперь находится **ВНИЗУ** (в меню клавиатуры).\n"
+        "👇 Нажмите на неё, чтобы открыть приложение.",
         reply_markup=keyboard
     )
     try:
@@ -320,7 +321,7 @@ async def handle_webapp_data(message: Message):
 
 async def process_web_check(message: Message, data: dict, user_id: int):
     image_data = data.get("image")
-    target_info = data.get("target_user_id", user_id)
+    target_info = data.get("target_user_id") or user_id
     action = data["action"]
 
     # 1. Handle Photo (Base64 or URL)

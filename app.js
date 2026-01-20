@@ -22,10 +22,11 @@ async function init() {
 
     console.log("WebApp Init", state.user);
 
-    // Bypass check if debug mode is on
+    // Bypass check if debug mode is on OR just log warning
     if (!state.user.id && !isDebug) {
-        showError("Пожалуйста, откройте это приложение из Telegram.");
-        return;
+        console.warn("User ID not detected in initData. Continuing anyway...");
+        // showError("Пожалуйста, откройте это приложение из Telegram.");
+        // return; 
     }
 
     // Default mock user for debug
@@ -288,7 +289,7 @@ async function submitData(action, targetId = null, btn = null) {
         sendData({
             action: action,
             image: payloadImage,
-            target_user_id: targetId || state.user.id
+            target_user_id: targetId || state.user.id || null
         });
     } catch (e) {
         console.error("Submit error", e);
