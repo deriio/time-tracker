@@ -392,7 +392,13 @@ async def process_web_check(message: Message, data: dict, user_id: int):
     if submitted_by:
         caption += f"\n✅ Подтверждено: {submitted_by}"
     
-    await message.answer_photo(photo=photo_url, caption=caption, parse_mode="Markdown")
+    try:
+        await message.answer_photo(photo=photo_url, caption=caption, parse_mode="Markdown")
+    except Exception as e_photo:
+        logger.error(f"Failed to send photo back: {e_photo}")
+        # Fallback to text only
+        caption_fallback = caption + "\n⚠️ (Фото сохранено в архиве)"
+        await message.answer(caption_fallback, parse_mode="Markdown")
 
 async def process_web_claim(message: Message, data: dict, user_id: int):
     selected_name = data.get("full_name")
