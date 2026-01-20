@@ -9,6 +9,8 @@ from aiogram.filters import Command
 from typing import Callable, Dict, Any, Awaitable, Union
 
 from sheets_manager import GoogleSheetManager
+from validators import validate_webapp_data
+from image_uploader import upload_to_imgbb
 
 # Load environment variables
 load_dotenv()
@@ -17,6 +19,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 GOOGLE_JSON_PATH = os.getenv("GOOGLE_JSON_PATH")
 DRIVE_FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
 TEMPLATE_FILE_ID = os.getenv("TEMPLATE_FILE_ID")
+IMGBB_API_KEY = os.getenv("IMGBB_API_KEY")
+WEBAPP_URL = os.getenv("WEBAPP_URL")
 
 # Admin IDs handling
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
@@ -36,7 +40,8 @@ logger = logging.getLogger(__name__)
 
 # Initialize dependencies
 sheet_manager = None
-USER_CACHE = {} # Normalized Username -> Full Name
+USER_CACHE_ID = {} # TG ID (int) -> Full Name
+USER_CACHE_UNAME = {} # Normalized Username -> Full Name
 ALL_NAMES_SET = set() # Set of all valid names
 
 try:
@@ -53,8 +58,13 @@ try:
     
     # Initial Cache Load
     logger.info("Loading authorized users from Google Sheet...")
-    USER_CACHE, _, ALL_NAMES_SET = sheet_manager.get_users_from_template()
-    logger.info(f"Loaded {len(USER_CACHE)} users and {len(ALL_NAMES_SET)} names.")
+    # Load via v2 logic to get IDs
+    users_v2 = sheet_manager.get_users_v2()
+    USER_CACHE_ID = {int(u["tg_id"]): u["name"] for u in users_v2 if u["tg_id"].isdigit()}
+    USER_CACHE_UNAME = {u["username"]: u["name"] for u in users_v2 if u["username"]}
+    ALL_NAMES_SET = {u["name"] for u in users_v2 if u["status"] == "active"}
+    
+    logger.info(f"Loaded {len(USER_CACHE_ID)} IDs, {len(USER_CACHE_UNAME)} usernames, {len(ALL_NAMES_SET)} names.")
     
 except Exception as e:
     logger.critical(f"Initialization Failed: {e}")
@@ -82,32 +92,36 @@ class AuthMiddleware(BaseMiddleware):
         if not user:
             return
 
-        # Check if it is a command /update
-        is_update_command = event.text and event.text.startswith("/update")
-
-        if is_update_command:
-            # Allow pass-through for handler to check admin rights
+        # Exempt /update and /setup_checkin from middleware block
+        is_bypass_command = event.text and (event.text.startswith("/update") or event.text.startswith("/setup_checkin"))
+        if is_bypass_command:
             return await handler(event, data)
 
-        if not user.username:
-            await event.answer(f"Access denied. You must have a Telegram Username set.")
-            return
+        # Priority 1: Check by Telegram ID
+        if user.id in USER_CACHE_ID:
+            data["user_name"] = USER_CACHE_ID[user.id]
+            return await handler(event, data)
 
-        username = user.username.lower()
+        # Priority 2: Check by Username
+        if user.username:
+            username = user.username.lower()
+            if username in USER_CACHE_UNAME:
+                name = USER_CACHE_UNAME[username]
+                # Auto-bind ID for future
+                if sheet_manager.bind_telegram_id(user.id, name):
+                    USER_CACHE_ID[user.id] = name
+                    logger.info(f"Auto-bound ID {user.id} to {name} via username @{username}")
+                data["user_name"] = name
+                return await handler(event, data)
+
+        # Access Denied (Will be handled by WebApp "Claim" flow later)
+        # For direct messages/photos, we still deny.
+        if event.photo or (event.text and not event.text.startswith("/")):
+            await event.answer(f"Access denied. Please use the Web App button to register.")
+            logger.warning(f"Unauthorized access attempt: {user.id} (@{user.username})")
+            return
         
-        # Check against cache OR Delegates
-        if username in USER_CACHE:
-             data["user_name"] = USER_CACHE[username]
-             return await handler(event, data)
-        
-        if username in DELEGATE_USERNAMES:
-             data["user_name"] = f"Delegate (@{username})" # Fallback name
-             return await handler(event, data)
-        
-        # Access Denied
-        await event.answer(f"Access denied. Username: @{user.username}")
-        logger.warning(f"Unauthorized access attempt: @{user.username}")
-        return
+        return await handler(event, data)
 
 # Bot initialization
 bot = Bot(token=BOT_TOKEN)
@@ -156,32 +170,172 @@ async def handle_photo(message: Message, user_name: str):
         logger.error(f"Error processing photo: {e}")
         await message.reply("❌ Error recording data. Please contact admin.")
 
+# Handler for /setup_checkin
+@dp.message(Command("setup_checkin"))
+async def handle_setup(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.reply("⛔ Admin access required.")
+        return
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+    import base64
+    import json
+    
+    # 1. Prepare Data for WebApp
+    users_v2 = sheet_manager.get_users_v2()
+    active_users = [{"id": u["tg_id"], "name": u["name"]} 
+                    for u in users_v2 if u["status"] == "active"]
+    orphan_names = sheet_manager.get_orphan_users()
+    
+    # Encode as Base64 for URL
+    orphans_b64 = base64.b64encode(json.dumps(orphan_names).encode()).decode()
+    employees_b64 = base64.b64encode(json.dumps(active_users).encode()).decode()
+    
+    # Supervisors list (from DELEGATE_USERNAMES or ADMIN_IDS)
+    # Plus anyone tagged as 'supervisor' in DB
+    super_ids = [u["tg_id"] for u in users_v2 if u["role"] == "supervisor" and u["tg_id"]]
+    # Add admins to supervisors by default
+    all_super_ids = list(set(super_ids + [str(i) for i in ADMIN_IDS]))
+    
+    # 2. Build URL
+    # Note: We can't easily pass the whole list if it's too long, but for small teams it's fine.
+    # Otherwise, the WebApp should fetch it via an API endpoint.
+    final_url = f"{WEBAPP_URL}?orphans={orphans_b64}&employees={employees_b64}"
+    
+    # Check if this specific user is a supervisor to show supervisor button?
+    # Actually, the WebApp will check state.user.id anyway.
+    if str(message.from_user.id) in all_super_ids:
+        final_url += "&is_super=1"
+        
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📸 Отметить Приход/Уход", web_app=WebAppInfo(url=final_url))]
+    ])
+    
+    msg = await message.answer(
+        "🕐 **Учёт Рабочего Времени**\n\n"
+        "Нажмите кнопку ниже, чтобы начать.\n"
+        "⚠️ Требуется доступ к камере.",
+        reply_markup=keyboard
+    )
+    try:
+        await msg.pin(disable_notification=True)
+    except:
+        pass
+
 # Handler for /update
 @dp.message(Command("update"))
 async def handle_update(message: Message):
     user_id = message.from_user.id
     if user_id not in ADMIN_IDS:
-        # Ignore or deny
-        # Since middleware skipped auth for /update, we must deny unauthorized users here
-        # But if they are regular users, they shouldn't call it either.
         await message.reply("⛔ Admin access required.")
         return
 
     await message.reply("🔄 Updating users from Master Template...")
     try:
-        global USER_CACHE, ALL_NAMES_SET
-        # 1. Refresh Cache
-        users_dict, raw_rows, all_names_set = sheet_manager.get_users_from_template()
-        USER_CACHE = users_dict
-        ALL_NAMES_SET = all_names_set
+        global USER_CACHE_ID, USER_CACHE_UNAME, ALL_NAMES_SET
+        users_v2 = sheet_manager.get_users_v2()
+        USER_CACHE_ID = {int(u["tg_id"]): u["name"] for u in users_v2 if u["tg_id"].isdigit()}
+        USER_CACHE_UNAME = {u["username"]: u["name"] for u in users_v2 if u["username"]}
+        ALL_NAMES_SET = {u["name"] for u in users_v2 if u["status"] == "active"}
         
-        # 2. Sync to Current Month
+        # Sync to Current Month (legacy rows support)
+        raw_rows = [[u["name"], "@"+u["username"]] for u in users_v2]
         sync_result = sheet_manager.sync_users_to_current_month(raw_rows)
         
-        await message.reply(f"✅ Success.\nCache: {len(USER_CACHE)} users.\nNames: {len(ALL_NAMES_SET)}\nSync: {sync_result}")
-        
+        await message.reply(f"✅ Success.\nIDs: {len(USER_CACHE_ID)}\nUsernames: {len(USER_CACHE_UNAME)}\nNames: {len(ALL_NAMES_SET)}\n{sync_result}")
     except Exception as e:
         await message.reply(f"❌ Update failed: {e}")
+
+# Handler for WebApp Data
+@dp.message(F.web_app_data)
+async def handle_webapp_data(message: Message):
+    try:
+        data = json.loads(message.web_app_data.data)
+        user_id = message.from_user.id
+        action = data.get("action")
+
+        if action in ["check_in", "check_out"]:
+            await process_web_check(message, data, user_id)
+        elif action == "claim":
+            await process_web_claim(message, data, user_id)
+        else:
+            await message.answer("❌ Unknown action")
+    except Exception as e:
+        logger.error(f"WebAppData error: {e}")
+        await message.answer("❌ Error processing Web App data.")
+
+async def process_web_check(message: Message, data: dict, user_id: int):
+    image_base64 = data.get("image")
+    target_tg_id = int(data.get("target_user_id", user_id))
+    action = data["action"]
+
+    # 1. Upload to ImgBB
+    await message.answer("⌛ Processing photo...")
+    photo_url = await upload_to_imgbb(image_base64, IMGBB_API_KEY)
+    if not photo_url:
+        await message.answer("❌ Failed to upload photo.")
+        return
+
+    # 2. Get Employee Info
+    # Check cache first
+    employee_name = USER_CACHE_ID.get(target_tg_id)
+    if not employee_name:
+        # Fallback to DB fetch
+        users = sheet_manager.get_users_v2()
+        for u in users:
+            if u["tg_id"] == str(target_tg_id):
+                employee_name = u["name"]
+                break
+    
+    if not employee_name:
+        await message.answer("❌ Error: Employee not found in database.")
+        return
+
+    # 3. Determine submitter (Supervisor mode)
+    submitted_by = ""
+    if target_tg_id != user_id:
+        submitter_name = USER_CACHE_ID.get(user_id, f"ID:{user_id}")
+        submitted_by = submitter_name
+
+    # 4. Log to Sheets
+    log_type = "Приход" if action == "check_in" else "Уход"
+    sheet_manager.append_log(
+        user_name=employee_name,
+        telegram_id=target_tg_id,
+        log_type=log_type,
+        photo_url=photo_url,
+        submitted_by=submitted_by
+    )
+
+    # 5. Notify Group
+    time_str = sheet_manager._get_moscow_time().strftime('%H:%M')
+    status_emoji = "🟢" if action == "check_in" else "🔴"
+    status_text = "НАЧАЛ РАБОТУ" if action == "check_in" else "ЗАКОНЧИЛ РАБОТУ"
+    
+    caption = f"{status_emoji} **{employee_name}** {status_text}\n🕒 {time_str}"
+    if submitted_by:
+        caption += f"\n✅ Подтверждено: {submitted_by}"
+    
+    await message.answer_photo(photo=photo_url, caption=caption, parse_mode="Markdown")
+
+async def process_web_claim(message: Message, data: dict, user_id: int):
+    selected_name = data.get("full_name")
+    if not selected_name: return
+
+    if sheet_manager.bind_telegram_id(user_id, selected_name):
+        USER_CACHE_ID[user_id] = selected_name
+        
+        # Notify Group
+        user_display = f"@{message.from_user.username}" if message.from_user.username else f"ID:{user_id}"
+        await message.answer(f"✅ Аккаунт успешно привязан к: **{selected_name}**", parse_mode="Markdown")
+        
+        # Public notification in current chat (group)
+        claim_msg = (f"⚠️ **Системное уведомление**\n"
+                     f"Пользователь {user_display} привязал свой аккаунт к сотруднику: **{selected_name}**")
+        await message.answer(claim_msg, parse_mode="Markdown")
+        logger.info(f"User {user_id} claimed {selected_name}")
+    else:
+        await message.answer("❌ Ошибка привязки аккаунта.")
     
 
 # Handler for Text

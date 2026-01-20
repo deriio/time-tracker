@@ -62,23 +62,67 @@ class GoogleSheetManager:
         # Format: "Timesheet_December_2025"
         return f"Timesheet_{date_obj.strftime('%B_%Y')}"
 
-    def get_users_from_template(self):
+    def get_users_v2(self):
         """
-        Reads users from the 'Config_Users' tab in the MASTER TEMPLATE.
-        Returns: 
-           - dict: {normalized_username: real_name} (for auth)
-           - list: raw rows for syncing
-           - set: all_names_set (set of all valid names found in column A)
+        New version: Reads users from Config_Users with columns:
+        A: Name, B: Username, C: Telegram ID, D: Role, E: Status
+        Returns:
+            - list of dicts: [{name, username, tg_id, role, status}]
         """
         try:
-            # Open the TEMPLATE file directly
+            sheet = self.gc.open_by_key(self.template_file_id)
+            wks = sheet.worksheet("Config_Users")
+            raw_values = wks.get("A2:E")
+            
+            users = []
+            for row in raw_values:
+                if len(row) >= 1:
+                    users.append({
+                        "name": row[0].strip(),
+                        "username": row[1].strip().replace("@", "").lower() if len(row) > 1 else "",
+                        "tg_id": str(row[2]).strip() if len(row) > 2 else "",
+                        "role": row[3].strip() if len(row) > 3 else "employee",
+                        "status": row[4].strip() if len(row) > 4 else "active"
+                    })
+            return users
+        except Exception as e:
+            logger.error(f"Failed to load users v2: {e}")
+            return []
+
+    def get_orphan_users(self):
+        """Returns list of names that have no Telegram ID linked."""
+        users = self.get_users_v2()
+        return [u["name"] for u in users if not u["tg_id"] and u["status"] == "active"]
+
+    def bind_telegram_id(self, tg_id: int, name: str):
+        """Binds a Telegram ID to a specific name in Config_Users."""
+        try:
             sheet = self.gc.open_by_key(self.template_file_id)
             wks = sheet.worksheet("Config_Users")
             
-            # Read from A2 to B (assuming headers in row 1)
-            raw_values = wks.get("A2:B") 
+            # Find the row by Name in Column A
+            cell = wks.find(name, in_column=1)
+            if cell:
+                wks.update_cell(cell.row, 3, str(tg_id))
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Failed to bind ID: {e}")
+            return False
+
+    def get_users_from_template(self):
+        """
+        LEGACY: Reads users from the 'Config_Users' tab.
+        Updated to handle new schema but return old formats for compatibility.
+        """
+        try:
+            sheet = self.gc.open_by_key(self.template_file_id)
+            wks = sheet.worksheet("Config_Users")
             
-            users_cache = {}
+            # Read from A2 to E (New Schema)
+            raw_values = wks.get("A2:E") 
+            
+            users_cache = {} # normalized_username -> real_name
             valid_rows = []
             all_names_set = set()
             
@@ -87,7 +131,7 @@ class GoogleSheetManager:
                 return {}, [], set()
 
             for row in raw_values:
-                if len(row) >= 1: # At least name must exist
+                if len(row) >= 1:
                     name = row[0].strip()
                     if name:
                         all_names_set.add(name)
@@ -95,12 +139,11 @@ class GoogleSheetManager:
                     if len(row) >= 2:
                         username = row[1].strip()
                         if name and username:
-                            # Normalize: lower case, remove @
                             norm_username = username.replace("@", "").lower()
                             users_cache[norm_username] = name
-                            valid_rows.append(row)
+                            valid_rows.append(row[:2]) # Still return only A:B for generic sync
             
-            logger.info(f"Loaded {len(users_cache)} users (auth) and {len(all_names_set)} total names from Master Template.")
+            logger.info(f"Loaded {len(users_cache)} users from Master Template.")
             return users_cache, valid_rows, all_names_set
             
         except Exception as e:
@@ -150,6 +193,66 @@ class GoogleSheetManager:
         except Exception as e:
             logger.error(f"Failed to sync users: {e}")
             return f"Error syncing users: {e}"
+
+    def soft_delete_user(self, telegram_id: int):
+        """Marks a user as deleted in Config_Users."""
+        try:
+            sheet = self.gc.open_by_key(self.template_file_id)
+            wks = sheet.worksheet("Config_Users")
+            # Find in Column C (ID)
+            cell = wks.find(str(telegram_id), in_column=3)
+            if cell:
+                wks.update_cell(cell.row, 5, "deleted")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Failed to soft delete: {e}")
+            return False
+
+    def admin_add_user(self, full_name, username="", tg_id="", role="employee"):
+        """Adds a new user to Config_Users and optionally to the current month."""
+        try:
+            sheet = self.gc.open_by_key(self.template_file_id)
+            wks = sheet.worksheet("Config_Users")
+            wks.append_row([full_name, username, str(tg_id), role, "active"])
+            
+            # Immediately add to current month report if it exists
+            self.add_user_to_current_month(full_name)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to add user: {e}")
+            return False
+
+    def add_user_to_current_month(self, full_name):
+        """Adds a row for a new user in the current month's report sheet if it exists."""
+        now = self._get_moscow_time()
+        target_name = self._get_sheet_name(now)
+        try:
+            query = f"name = '{target_name}' and '{self.drive_folder_id}' in parents and trashed = false"
+            results = self.drive_service.files().list(q=query, fields="files(id)").execute()
+            items = results.get('files', [])
+            if not items: return False
+            
+            sheet_id = items[0]['id']
+            sheet = self.gc.open_by_key(sheet_id)
+            wks = sheet.worksheet("Отчет_Месяц")
+            
+            # Find the last row with a name in Column A
+            names = wks.col_values(1)
+            last_row = len(names)
+            
+            if last_row < 3: return False # Header is 1-2
+            
+            # Copy formatting and formulas from the last existing employee row
+            # Range structure from structure.js: A:DM
+            next_row = last_row + 1
+            wks.copy_range(f"A{last_row}:DM{last_row}", f"A{next_row}:DM{next_row}")
+            wks.update_acell(f"A{next_row}", full_name)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to add user to month: {e}")
+            return False
+
 
     def update_sheet_headers(self, sheet_file_id, date_obj):
         """
@@ -332,7 +435,8 @@ class GoogleSheetManager:
             logger.error(f"Fallback creation failed: {e}")
             return None
 
-    def append_log(self, user_name: str, telegram_id: int, telegram_username: str, log_type: str = "Log"):
+    def append_log(self, user_name: str, telegram_id: int, log_type: str = "Log", 
+                   photo_url: str = "", submitted_by: str = ""):
         """
         Appends a log entry to the current month's sheet.
         """
@@ -348,14 +452,15 @@ class GoogleSheetManager:
             date_str = now.strftime("%d.%m.%Y")
             time_str = now.strftime("%H:%M")
             
-            # Row Format: Date, Time, Employee Name, Type, Telegram Username
-            row = [date_str, time_str, user_name, log_type, telegram_username]
+            # Row Format: Date, Time, Employee Name, Type, Photo URL, Submitted By, Tg_ID
+            row = [date_str, time_str, user_name, log_type, photo_url, submitted_by, str(telegram_id)]
             
             # Append using USER_ENTERED to ensure dates are parsed correctly by Sheets
             wks.append_row(row, value_input_option="USER_ENTERED")
             
-            logger.info(f"Logged entry for {user_name} at {time_str}")
+            logger.info(f"Logged {log_type} for {user_name} at {time_str}")
             
         except Exception as e:
             logger.error(f"Failed to append log: {e}")
             raise e
+
