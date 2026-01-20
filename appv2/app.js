@@ -33,29 +33,31 @@ async function init() {
         state.user = { id: 7042383572, first_name: "Admin", username: "test_user" };
     }
 
-    // Identify user role and get initial lists
-    const orphanData = params.get("orphans");
-    const empData = params.get("employees");
-    state.imgbbKey = params.get("imgbb");
+    // Optimized parameter handling
+    const orphanData = params.get("o") || params.get("orphans");
+    const empData = params.get("e") || params.get("employees");
+    state.imgbbKey = params.get("b") || params.get("imgbb");
 
-    // Safe decoding: tries decodeURIComponent, fallback to B64
+    // Safe decoding: tries B64 first (more common now), then decodeURIComponent
     function robustDecode(str) {
         if (!str) return null;
-        try {
-            // Try simple URL decode first
-            const decoded = decodeURIComponent(str);
-            if (decoded.startsWith('[') || decoded.startsWith('{')) return decoded;
-        } catch (e) { }
 
+        // Try Base64 first (new optimized way)
         try {
             const b64 = str.replace(/-/g, '+').replace(/_/g, '/');
             const bin = atob(b64);
             const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
-            return new TextDecoder().decode(bytes);
-        } catch (e) {
-            console.error("Decode error", e);
-            return null;
-        }
+            const decoded = new TextDecoder().decode(bytes);
+            if (decoded.startsWith('[') || decoded.startsWith('{')) return decoded;
+        } catch (e) { }
+
+        try {
+            // Try simple URL decode fallback
+            const decoded = decodeURIComponent(str);
+            if (decoded.startsWith('[') || decoded.startsWith('{')) return decoded;
+        } catch (e) { }
+
+        return null;
     }
 
     if (orphanData) {
@@ -87,8 +89,7 @@ async function init() {
     }
 
     // Role detection logic
-    // Now state.employeeList contains strings (names), not objects.
-    const isSupervisor = params.get("is_super") === "1";
+    const isSupervisor = params.get("s") === "1" || params.get("is_super") === "1";
 
     // Attempt to find current user's name if they are an employee
     // (Note: This is hard without ID mapping in URL, but we can assume if they aren't super/orphan, they check for themselves)

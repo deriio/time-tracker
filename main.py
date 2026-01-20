@@ -88,22 +88,29 @@ class AuthMiddleware(BaseMiddleware):
         # Better: Check ADMIN_IDS logic in the handler, but this middleware blocks everything.
         # Optimization: If it's a command /update, check ADMIN_IDS and bypass user cache.
         
+        # HYPER-VERBOSE LOGGING FOR DEBUG
+        update_info = f"Update:{event.message_id} from:{event.from_user.id}"
+        if hasattr(event, 'text') and event.text: update_info += f" text:{event.text[:20]}"
+        if hasattr(event, 'web_app_data') and event.web_app_data: update_info += " [WEB_APP_DATA PRESENT]"
+        logger.info(f"MW START: {update_info}")
+
         user = event.from_user
         if not user:
             return await handler(event, data)
 
         # Exempt specific commands from middleware
         is_bypass = False
+        if hasattr(event, "web_app_data") and event.web_app_data:
+            logger.info(f"MW BYPASS: WebApp data detected")
+            is_bypass = True
+        
         try:
             if hasattr(event, "text") and event.text:
                 if event.text.startswith(("/update", "/setup_checkin", "/debug_users")):
+                    logger.info(f"MW BYPASS: Command {event.text.split()[0]} detected")
                     is_bypass = True
         except:
             pass
-
-        # Also bypass if it's WebApp data (it doesn't have .text usually in the way filters expect)
-        if hasattr(event, "web_app_data") and event.web_app_data:
-            is_bypass = True
 
         if is_bypass:
             return await handler(event, data)
@@ -214,32 +221,26 @@ async def handle_setup(message: Message):
     is_super = str(message.from_user.id) in all_super_ids
     logger.info(f"DEBUG: User {message.from_user.id} is_super: {is_super}")
     
-    # Pass data via URL component
-    from urllib.parse import quote
-    final_params = []
+    # Pass data via URL component - optimized for length
+    import base64
+    def b64_safe(data):
+        j = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
+        return base64.urlsafe_b64encode(j.encode('utf-8')).decode('ascii').rstrip('=')
+
+    final_params = [f"b={IMGBB_API_KEY}"] # 'b' for imgbb
     
     if is_super:
-        # Standardize "active" check
         active_names = [u["name"] for u in users_v2 if u["status"].strip().lower() == "active"]
-        logger.info(f"DEBUG: Active names found: {len(active_names)}")
-        
-        emp_json = json.dumps(active_names, separators=(',', ':'), ensure_ascii=False)
-        emp_encoded = quote(emp_json)
-        final_params.append(f"employees={emp_encoded}")
-        final_params.append("is_super=1")
+        final_params.append(f"e={b64_safe(active_names)}") # 'e' for employees
+        final_params.append("s=1") # 's' for is_super
     else:
         orphan_names = sheet_manager.get_orphan_users()
-        orph_json = json.dumps(orphan_names, separators=(',', ':'), ensure_ascii=False)
-        orph_encoded = quote(orph_json)
-        final_params.append(f"orphans={orph_encoded}")
+        final_params.append(f"o={b64_safe(orphan_names)}") # 'o' for orphans
     
-    # Added v=2.2 for cache busting + imgbb key
-    final_params.append(f"imgbb={IMGBB_API_KEY}")
-    query_str = "v=2.2&" + "&".join(final_params)
+    query_str = "v=2.8&" + "&".join(final_params)
     final_url = f"{WEBAPP_URL}?{query_str}"
     
-    logger.info(f"Building WebApp URL. Super: {is_super}, Final length: {len(final_url)}")
-    logger.info(f"Final URL: {final_url}")
+    logger.info(f"WebApp URL ready. Super: {is_super}, Final length: {len(final_url)}")
         
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📸 Отметить Приход/Уход", web_app=WebAppInfo(url=final_url))]
