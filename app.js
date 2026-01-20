@@ -252,25 +252,37 @@ function setupCamera(inputId, imgId, placeholderId, btnId, retakeId, onCapture) 
 
 // COMMUNICATION
 async function submitData(action, targetId = null, btn = null) {
-    if (!state.photoBase64) return;
+    if (!state.photoBase64) {
+        alert("Пожалуйста, сначала сделайте фото.");
+        return;
+    }
 
     let originalText = "";
     if (btn) {
         originalText = btn.textContent;
-        btn.textContent = "⌛ Отправка...";
+        btn.textContent = "⌛ Загрузка...";
         btn.disabled = true;
     }
 
     try {
-        let payloadImage = state.photoBase64;
+        let payloadImage = null;
 
-        // Try to upload to ImgBB client-side to save Telegram bandwidth
-        if (state.imgbbKey) {
-            const uploadedUrl = await uploadToImgBB(state.photoBase64, state.imgbbKey);
-            if (uploadedUrl) {
-                payloadImage = uploadedUrl;
-            }
+        // Force upload to ImgBB
+        if (!state.imgbbKey) {
+            throw new Error("Отсутствует ключ API для загрузки фото.");
         }
+
+        console.log("Uploading to ImgBB...");
+        const uploadedUrl = await uploadToImgBB(state.photoBase64, state.imgbbKey);
+
+        if (uploadedUrl) {
+            payloadImage = uploadedUrl;
+            console.log("Upload Success:", payloadImage);
+        } else {
+            throw new Error("Не удалось загрузить фотографию на сервер (ImgBB). Проверьте интернет или настройки.");
+        }
+
+        if (btn) btn.textContent = "⌛ Отправка...";
 
         sendData({
             action: action,
@@ -279,7 +291,7 @@ async function submitData(action, targetId = null, btn = null) {
         });
     } catch (e) {
         console.error("Submit error", e);
-        alert("Ошибка отправки: " + e.message);
+        alert("Ошибка: " + e.message);
         if (btn) {
             btn.textContent = originalText;
             btn.disabled = false;
