@@ -4,7 +4,7 @@ import logging
 import asyncio
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F, BaseMiddleware
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
 from aiogram.filters import Command
 from typing import Callable, Dict, Any, Awaitable, Union
 
@@ -217,64 +217,77 @@ async def handle_debug_users(message: Message):
     logger.info(f"--- END DUMP. Total: {len(users)}, Active: {active_count} ---")
     await message.reply(f"Dumped {len(users)} users. Active: {active_count}.")
 
-# Handler for /setup_checkin
+# Handler for /setup_checkin - Creates the PINNED message with INLINE button
 @dp.message(Command("setup_checkin"))
 async def handle_setup(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         await message.reply("⛔ Admin access required.")
         return
 
-    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
-    
-    import json
-    import base64
-    
-    # 1. Prepare Data Logic
-    users_v2 = sheet_manager.get_users_v2()
-    logger.info(f"DEBUG: Total users found: {len(users_v2)}")
-    
-    # Identify supervisors (Admins + users with role 'supervisor' in sheet)
-    super_ids = [u["tg_id"] for u in users_v2 if u["role"].lower() == "supervisor" and u["tg_id"]]
-    all_super_ids = list(set(super_ids + [str(i) for i in ADMIN_IDS]))
-    
-    is_super = str(message.from_user.id) in all_super_ids
-    logger.info(f"DEBUG: User {message.from_user.id} is_super: {is_super}")
-    
-    # Pass data via URL component - optimized for length
-    def b64_safe(data):
-        j = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
-        return base64.urlsafe_b64encode(j.encode('utf-8')).decode('ascii').rstrip('=')
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-    final_params = [f"b={IMGBB_API_KEY}"] # 'b' for imgbb
-    
-    if is_super:
-        active_names = [u["name"] for u in users_v2 if u["status"].strip().lower() == "active"]
-        final_params.append(f"e={b64_safe(active_names)}") # 'e' for employees
-        final_params.append("s=1") # 's' for is_super
-    else:
-        orphan_names = sheet_manager.get_orphan_users()
-        final_params.append(f"o={b64_safe(orphan_names)}") # 'o' for orphans
-    
-    query_str = "v=2.8&" + "&".join(final_params)
-    final_url = f"{WEBAPP_URL}?{query_str}"
-    
-    logger.info(f"WebApp URL ready. Super: {is_super}, Final length: {len(final_url)}")
-
-    # USE REPLY KEYBOARD (Required for sendData to work!)
-    keyboard = ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📸 Отметить Приход/Уход", web_app=WebAppInfo(url=final_url))]
-    ], resize_keyboard=True, one_time_keyboard=False)
+    # Clean Inline Keyboard
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✍️ Открыть терминал учета", callback_data="start_flow")]
+    ])
     
     msg = await message.answer(
-        "🕐 **Учёт Рабочего Времени**\n\n"
-        "Кнопка для запуска теперь находится **ВНИЗУ** (в меню клавиатуры).\n"
-        "👇 Нажмите на неё, чтобы открыть приложение.",
-        reply_markup=keyboard
+        "🏭 **Терминал Учёта Времени**\n\n"
+        "Чтобы отметить приход или уход, нажмите кнопку ниже.\n"
+        "Кнопка запуска появится временно.",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
     )
     try:
         await msg.pin(disable_notification=True)
     except:
         pass
+
+# New Callback Handler: Generates the specialized WebApp Link dynamically
+@dp.callback_query(F.data == "start_flow")
+async def handle_start_flow(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    
+    # 1. Prepare Data Logic (moved here so it regenerates fresh every time)
+    import json
+    import base64
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
+
+    users_v2 = sheet_manager.get_users_v2()
+    
+    # Identify supervisors
+    super_ids = [u["tg_id"] for u in users_v2 if u["role"].lower() == "supervisor" and u["tg_id"]]
+    all_super_ids = list(set(super_ids + [str(i) for i in ADMIN_IDS]))
+    
+    is_super = str(user_id) in all_super_ids
+    
+    def b64_safe(data):
+        j = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
+        return base64.urlsafe_b64encode(j.encode('utf-8')).decode('ascii').rstrip('=')
+
+    final_params = [f"b={IMGBB_API_KEY}"] 
+    
+    if is_super:
+        active_names = [u["name"] for u in users_v2 if u["status"].strip().lower() == "active"]
+        final_params.append(f"e={b64_safe(active_names)}")
+        final_params.append("s=1")
+    else:
+        orphan_names = sheet_manager.get_orphan_users()
+        final_params.append(f"o={b64_safe(orphan_names)}")
+    
+    query_str = "v=2.9&" + "&".join(final_params) # Bump version just in case
+    final_url = f"{WEBAPP_URL}?{query_str}"
+    
+    # 2. Send the Temporary Reply Keyboard
+    kb = ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="📸 НАЖМИ СЮДА ДЛЯ ФОТО", web_app=WebAppInfo(url=final_url))]
+    ], resize_keyboard=True, one_time_keyboard=True) # one_time_keyboard helps client hide it
+
+    await callback.message.answer(
+        "👇 **Нажмите кнопку внизу экрана, чтобы открыть камеру.**", 
+        reply_markup=kb
+    )
+    await callback.answer()
 
 # Handler for /update
 @dp.message(Command("update"))
@@ -320,12 +333,15 @@ async def handle_webapp_data(message: Message):
         await message.answer("❌ Error processing Web App data.")
 
 async def process_web_check(message: Message, data: dict, user_id: int):
+    # Import RemoveKeyboard here
+    from aiogram.types import ReplyKeyboardRemove
+    
     image_data = data.get("image")
     target_info = data.get("target_user_id") or user_id
     action = data["action"]
 
     # 1. Handle Photo (Base64 or URL)
-    await message.answer("⌛ Processing photo...")
+    status_msg = await message.answer("⌛ Обработка...", reply_markup=ReplyKeyboardRemove()) # REMOVE KEYBOARD HERE
     
     photo_url = None
     if image_data.startswith("http"):
@@ -399,8 +415,16 @@ async def process_web_check(message: Message, data: dict, user_id: int):
         # Fallback to text only
         caption_fallback = caption + "\n⚠️ (Фото сохранено в архиве)"
         await message.answer(caption_fallback, parse_mode="Markdown")
+    
+    # Cleanup status message if possible
+    try:
+        await status_msg.delete()
+    except:
+        pass
 
 async def process_web_claim(message: Message, data: dict, user_id: int):
+    from aiogram.types import ReplyKeyboardRemove # Import for cleanup
+    
     selected_name = data.get("full_name")
     if not selected_name: return
 
@@ -409,7 +433,11 @@ async def process_web_claim(message: Message, data: dict, user_id: int):
         
         # Notify Group
         user_display = f"@{message.from_user.username}" if message.from_user.username else f"ID:{user_id}"
-        await message.answer(f"✅ Аккаунт успешно привязан к: **{selected_name}**", parse_mode="Markdown")
+        await message.answer(
+            f"✅ Аккаунт успешно привязан к: **{selected_name}**", 
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardRemove() # Clean up keyboard
+        )
         
         # Public notification in current chat (group)
         claim_msg = (f"⚠️ **Системное уведомление**\n"
@@ -417,8 +445,9 @@ async def process_web_claim(message: Message, data: dict, user_id: int):
         await message.answer(claim_msg, parse_mode="Markdown")
         logger.info(f"User {user_id} claimed {selected_name}")
     else:
-        await message.answer("❌ Ошибка привязки аккаунта.")
+        await message.answer("❌ Ошибка привязки аккаунта.", reply_markup=ReplyKeyboardRemove())
     
+
 
 # Handler for all other text messages
 @dp.message(F.text)
