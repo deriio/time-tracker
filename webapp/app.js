@@ -14,7 +14,7 @@ const state = {
     targetUserId: null,
     groupId: null,
     employeeName: null,
-    apiUrl: "https://many-tigers-poke.loca.lt/api/checkin"
+    apiUrl: "https://ninety-dots-begin.loca.lt/api/checkin"
 };
 
 // Start
