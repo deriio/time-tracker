@@ -12,7 +12,9 @@ const state = {
     orphanList: [],
     employeeList: [],
     targetUserId: null,
-    groupId: null
+    groupId: null,
+    employeeName: null,
+    apiUrl: "https://many-tigers-poke.loca.lt/api/checkin"
 };
 
 // Start
@@ -97,12 +99,15 @@ async function init() {
     if (isSupervisor) {
         state.role = "supervisor";
     } else if (state.employeeList.length > 0) {
-        // Simple heuristic: if we have employees and not a supervisor, we are an employee
-        // We'll use the TG first_name or placeholder
         state.role = "employee";
         state.employeeName = state.user.first_name || "Сотрудник";
     } else {
         state.role = "orphan";
+    }
+
+    // Attempt name detection if employee
+    if (state.role === "employee" && state.user.id) {
+        // Logic to find name from list can be added, but for now we use first_name
     }
 
     renderScreen();
@@ -248,24 +253,47 @@ function setupCamera(inputId, imgId, placeholderId, btnId, retakeId, onCapture) 
 }
 
 // COMMUNICATION
-function submitData(action, targetId = null) {
+async function submitData(action, targetId = null) {
     if (!state.photoBase64) return;
 
-    sendData({
-        action: action,
-        image: state.photoBase64,
-        target_user_id: targetId || state.user.id,
-        group_id: state.groupId
-    });
+    const btn = document.activeElement;
+    if (btn) btn.disabled = true;
+
+    // We can't use tg.sendData because it fails in groups.
+    // Instead, we call our own API.
+    try {
+        const payload = {
+            action: action,
+            photo: state.photoBase64,
+            user_id: state.user.id,
+            group_id: state.groupId,
+            employee_name: targetId || state.employeeName || state.user.first_name,
+            target_user_id: targetId
+        };
+
+        const response = await fetch(state.apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+            tg.close();
+        } else {
+            alert("Ошибка сервера: " + response.status);
+            if (btn) btn.disabled = false;
+        }
+    } catch (e) {
+        alert("Ошибка сети: " + e.message);
+        if (btn) btn.disabled = false;
+    }
 }
 
 function sendData(data) {
-    console.log("Sending data to Telegram:", data);
+    // Legacy support for claim
     if (tg && tg.sendData) {
         tg.sendData(JSON.stringify(data));
         tg.close();
-    } else {
-        alert("Данные отправлены (Debug): " + data.action);
     }
 }
 

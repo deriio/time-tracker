@@ -20,7 +20,6 @@ from typing import Callable, Dict, Any, Awaitable, Union
 
 from sheets_manager import GoogleSheetManager
 from validators import validate_webapp_data
-from image_uploader import upload_to_imgbb
 
 # Load environment variables
 load_dotenv()
@@ -29,7 +28,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 GOOGLE_JSON_PATH = os.getenv("GOOGLE_JSON_PATH")
 DRIVE_FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
 TEMPLATE_FILE_ID = os.getenv("TEMPLATE_FILE_ID")
-IMGBB_API_KEY = os.getenv("IMGBB_API_KEY")
 WEBAPP_URL = os.getenv("WEBAPP_URL")
 
 # Admin IDs handling
@@ -234,54 +232,12 @@ async def handle_setup(message: Message, bot: Bot):
         await message.reply("⛔ Admin access required.")
         return
 
-    # 1. Determine Button Type
-    # If in group, we MUST use a URL button to transition to Private Chat
-    # If in private, we can use the Inline Callback
-    
-    if message.chat.type != "private":
-        bot_info = await bot.get_me()
-        chat_id_clean = str(message.chat.id).replace("-100", "G") # Safe for start param
-        url = f"https://t.me/{bot_info.username}?start={chat_id_clean}"
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✍️ Отметить Приход/Уход", url=url)]
-        ])
-    else:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✍️ Открыть терминал учета", callback_data="start_flow")]
-        ])
-    
-    msg = await message.answer(
-        "🏭 **Терминал Учёта Времени**\n\n"
-        "Чтобы отметиться, нажмите кнопку ниже.\n"
-        "Это откроет камеру в диалоге с ботом.",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
-    try:
-        if message.chat.type != "private":
-            await msg.pin(disable_notification=True)
-    except:
-        pass
-
-# /start handler to catch transitions from groups
-@dp.message(CommandStart())
-async def handle_start(message: Message):
-    args = message.text.split()
-    group_id = None
-    if len(args) > 1:
-        param = args[1]
-        if param.startswith("G"):
-            group_id = param.replace("G", "-100")
-    
-    # Show the launcher privately
-    await send_webapp_launcher(message, group_id)
-
-async def send_webapp_launcher(message: Message, group_id=None):
-    user_id = message.from_user.id
     import json
     import base64
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
     
+    # 1. Prepare Data
+    user_id = message.from_user.id
     users_v2 = sheet_manager.get_users_v2()
     super_ids = [u["tg_id"] for u in users_v2 if u["role"].lower() == "supervisor" and u["tg_id"]]
     all_super_ids = list(set(super_ids + [str(i) for i in ADMIN_IDS]))
@@ -291,7 +247,8 @@ async def send_webapp_launcher(message: Message, group_id=None):
         j = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
         return base64.urlsafe_b64encode(j.encode('utf-8')).decode('ascii').rstrip('=')
 
-    final_params = [f"b={IMGBB_API_KEY}"] 
+    # Pass everything in the URL
+    final_params = []
     if is_super:
         active_names = [u["name"] for u in users_v2 if u["status"].strip().lower() == "active"]
         final_params.append(f"e={b64_safe(active_names)}")
@@ -300,29 +257,39 @@ async def send_webapp_launcher(message: Message, group_id=None):
         orphan_names = sheet_manager.get_orphan_users()
         final_params.append(f"o={b64_safe(orphan_names)}")
     
-    # ADD GROUP ID TO URL
-    if group_id:
-        final_params.append(f"g={group_id}")
+    # CRITICAL: Pass current Group ID
+    final_params.append(f"g={message.chat.id}")
     
-    query_str = "v=3.0&" + "&".join(final_params)
+    query_str = "v=3.1&" + "&".join(final_params)
     final_url = f"{WEBAPP_URL}?{query_str}"
-    
-    kb = ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📸 НАЖМИ СЮДА ДЛЯ ФОТО", web_app=WebAppInfo(url=final_url))]
-    ], resize_keyboard=True, one_time_keyboard=True)
 
-    await message.answer(
-        "👇 **Нажмите кнопку внизу для запуска камеры.**\n\n"
-        "Ваш отчет будет автоматически отправлен в группу.", 
-        reply_markup=kb,
+    # Now we can use a direct WebApp button in the group!
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📸 Открыть терминал учета", web_app=WebAppInfo(url=final_url))]
+    ])
+    
+    msg = await message.answer(
+        "🏭 **Терминал Учёта Времени**\n\n"
+        "Чтобы отметиться, нажмите кнопку ниже.\n"
+        "Камера откроется прямо здесь.",
+        reply_markup=keyboard,
         parse_mode="Markdown"
     )
+    try:
+        if message.chat.type != "private":
+            await msg.pin(disable_notification=True)
+    except:
+        pass
 
-# Callback Handler for private chat (legacy/direct)
+# /start handler
+@dp.message(CommandStart())
+async def handle_start(message: Message):
+    await message.answer("Бот запущен. Пожалуйста, используйте кнопку в группе.")
+
+# Cleanup legacy handlers
 @dp.callback_query(F.data == "start_flow")
 async def handle_start_flow(callback: CallbackQuery):
-    await send_webapp_launcher(callback.message)
-    await callback.answer()
+    await callback.answer("Пожалуйста, используйте основную кнопку в закрепе.", show_alert=True)
 
 # Handler for /update
 @dp.message(Command("update"))
