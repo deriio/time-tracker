@@ -36,7 +36,15 @@ async function init() {
     const orphanData = params.get("orphans");
     const empData = params.get("employees");
 
-    function decodeB64(str) {
+    // Safe decoding: tries decodeURIComponent, fallback to B64
+    function robustDecode(str) {
+        if (!str) return null;
+        try {
+            // Try simple URL decode first
+            const decoded = decodeURIComponent(str);
+            if (decoded.startsWith('[') || decoded.startsWith('{')) return decoded;
+        } catch (e) { }
+
         try {
             const b64 = str.replace(/-/g, '+').replace(/_/g, '/');
             const bin = atob(b64);
@@ -49,7 +57,7 @@ async function init() {
     }
 
     if (orphanData) {
-        const decoded = decodeB64(orphanData);
+        const decoded = robustDecode(orphanData);
         if (decoded) {
             try { state.orphanList = JSON.parse(decoded); } catch (e) { console.error("JSON error orphans", e); }
         } else {
@@ -57,7 +65,7 @@ async function init() {
         }
     }
     if (empData) {
-        const decoded = decodeB64(empData);
+        const decoded = robustDecode(empData);
         if (decoded) {
             try {
                 state.employeeList = JSON.parse(decoded);
