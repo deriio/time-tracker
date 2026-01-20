@@ -141,11 +141,29 @@ class AuthMiddleware(BaseMiddleware):
         
         return await handler(event, data)
 
+# Outer Middleware for Raw Updates
+class OuterLoggerMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[Any, Dict[str, Any]], Awaitable[Any]],
+        event: Any,
+        data: Dict[str, Any]
+    ) -> Any:
+        # event is Update here
+        logger.info(f"OUTER MW: Incoming Update {event.update_id}")
+        if event.message:
+            ct = event.message.content_type
+            logger.info(f"OUTER MW: Message ContentType: {ct}")
+            if event.message.web_app_data:
+                logger.info(f"OUTER MW: WEB_APP_DATA detected: {event.message.web_app_data.data[:50]}...")
+        return await handler(event, data)
+
 # Bot initialization
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # Apply middleware
+dp.update.outer_middleware(OuterLoggerMiddleware())
 dp.message.middleware(AuthMiddleware())
 
 # Handler for Photos
@@ -281,8 +299,8 @@ async def handle_update(message: Message):
     except Exception as e:
         await message.reply(f"❌ Update failed: {e}")
 
-# Handler for WebApp Data
-@dp.message(F.web_app_data)
+# Handler for WebApp Data (Robust Filter)
+@dp.message(lambda m: m.web_app_data is not None)
 async def handle_webapp_data(message: Message):
     logger.info(f"RECEIVED WebApp Data from {message.from_user.id}: {message.web_app_data.data[:100]}...")
     try:
@@ -402,6 +420,12 @@ async def handle_text(message: Message):
     if message.text.startswith("/"):
         return
     await message.reply("Пожалуйста, отправьте фото, чтобы отметиться, или используйте кнопку в меню.")
+
+@dp.message()
+async def handle_fallback(message: Message):
+    logger.warning(f"FALLBACK: Unhandled message from {message.from_user.id}. Type: {message.content_type}")
+    if message.web_app_data:
+         logger.warning("FALLBACK: IT WAS WEB APP DATA! ROUTING FAILED.")
 
 async def main():
     logger.info("Starting bot...")
