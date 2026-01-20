@@ -36,22 +36,61 @@ async function init() {
     const orphanData = params.get("orphans");
     const empData = params.get("employees");
 
+    function decodeB64(str) {
+        try {
+            const b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+            const bin = atob(b64);
+            const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+            return new TextDecoder().decode(bytes);
+        } catch (e) {
+            console.error("Decode error", e);
+            return null;
+        }
+    }
+
     if (orphanData) {
-        try { state.orphanList = JSON.parse(atob(orphanData)); } catch (e) { console.error("Bad orphans data", e); }
+        const decoded = decodeB64(orphanData);
+        if (decoded) {
+            try { state.orphanList = JSON.parse(decoded); } catch (e) { console.error("JSON error orphans", e); }
+        } else {
+            showError("Ошибка декодирования orphans");
+        }
     }
     if (empData) {
-        try { state.employeeList = JSON.parse(atob(empData)); } catch (e) { console.error("Bad employees data", e); }
+        const decoded = decodeB64(empData);
+        if (decoded) {
+            try {
+                state.employeeList = JSON.parse(decoded);
+                console.log("Employees loaded:", state.employeeList.length);
+            } catch (e) {
+                console.error("JSON error employees", e);
+                showError("Ошибка JSON employees: " + e.message);
+            }
+        } else {
+            showError("Ошибка декодирования employees");
+        }
+    }
+
+    // DEBUG: Show count
+    if (params.get("debug_info") === "1") {
+        alert(`Loaded: ${state.employeeList.length} employees, ${state.orphanList.length} orphans`);
     }
 
     // Role detection logic
-    const me = state.employeeList.find(e => Number(e.id) === state.user.id);
+    // Now state.employeeList contains strings (names), not objects.
     const isSupervisor = params.get("is_super") === "1";
+
+    // Attempt to find current user's name if they are an employee
+    // (Note: This is hard without ID mapping in URL, but we can assume if they aren't super/orphan, they check for themselves)
+    // Actually, we'll use first_name as fallback if they aren't in any list.
 
     if (isSupervisor) {
         state.role = "supervisor";
-    } else if (me) {
+    } else if (state.employeeList.length > 0) {
+        // Simple heuristic: if we have employees and not a supervisor, we are an employee
+        // We'll use the TG first_name or placeholder
         state.role = "employee";
-        state.employeeName = me.name;
+        state.employeeName = state.user.first_name || "Сотрудник";
     } else {
         state.role = "orphan";
     }
@@ -74,7 +113,20 @@ function renderScreen() {
 
     if (state.role === "orphan") initOrphanScreen();
     if (state.role === "employee") initEmployeeScreen();
-    if (state.role === "supervisor") initSupervisorScreen();
+    if (state.role === "supervisor") {
+        initSupervisorScreen();
+        // Inline Debug if empty
+        if (state.employeeList.length === 0) {
+            const select = document.getElementById("target-select");
+            const debugP = document.createElement("p");
+            debugP.style.color = "orange";
+            debugP.style.fontSize = "10px";
+            debugP.style.marginTop = "5px";
+            const rawLen = (empData || "").length;
+            debugP.textContent = `Внимание: Список пуст. Параметр: ${rawLen} байт.`;
+            select.parentNode.appendChild(debugP);
+        }
+    }
 }
 
 // ORPHAN SCREEN
@@ -126,10 +178,13 @@ function initSupervisorScreen() {
     const btnIn = document.getElementById("btn-super-in");
     const btnOut = document.getElementById("btn-super-out");
 
-    state.employeeList.forEach(emp => {
+    // Clear existing
+    select.innerHTML = '<option value="">-- Выберите сотрудника --</option>';
+
+    state.employeeList.forEach(name => {
         const opt = document.createElement("option");
-        opt.value = emp.id;
-        opt.textContent = emp.name;
+        opt.value = name;
+        opt.textContent = name;
         select.appendChild(opt);
     });
 

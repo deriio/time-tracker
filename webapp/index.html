@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ru">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
@@ -7,6 +8,7 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
     <div id="app">
         <!-- Loader -->
@@ -15,9 +17,9 @@
             <p>Загрузка системы...</p>
         </div>
     </div>
-    
+
     <!-- Screen Templates -->
-    
+
     <!-- ORPHAN / CLAIM FLOW -->
     <template id="template-orphan">
         <div class="screen orphan-screen">
@@ -29,7 +31,8 @@
                     <option value="">-- Выберите из списка --</option>
                 </select>
             </div>
-            <p class="warning-text">⚠️ Внимание! Это действие будет опубликовано в общей группе для подтверждения вашей личности.</p>
+            <p class="warning-text">⚠️ Внимание! Это действие будет опубликовано в общей группе для подтверждения вашей
+                личности.</p>
             <button id="btn-claim" class="btn primary" disabled>✅ Это я, привязать аккаунт</button>
         </div>
     </template>
@@ -50,7 +53,7 @@
                 <button id="btn-snap" class="btn secondary">📸 Сделать фото (Камера)</button>
                 <button id="btn-retake" class="btn link" style="display:none">Переснять</button>
             </div>
-            
+
             <div class="action-grid">
                 <button id="btn-check-in" class="btn success" disabled>🟢 НАЧАЛ РАБОТУ</button>
                 <button id="btn-check-out" class="btn danger" disabled>🔴 ЗАКОНЧИЛ РАБОТУ</button>
@@ -68,7 +71,7 @@
                     <option value="">-- Выберите сотрудника --</option>
                 </select>
             </div>
-            
+
             <div class="camera-section">
                 <div class="preview-box">
                     <img id="photo-preview-super" alt="Превью">
@@ -88,6 +91,8 @@
     </template>
 
     <!-- Scripts -->
-    <script src="app.js"></script>
+    <!-- Scripts -->
+    <script src="app.js?v=2.2"></script>
 </body>
+
 </html>
