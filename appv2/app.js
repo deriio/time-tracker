@@ -11,7 +11,8 @@ const state = {
     photoBase64: null,
     orphanList: [],
     employeeList: [],
-    targetUserId: null
+    targetUserId: null,
+    imgbbKey: null
 };
 
 // Start
@@ -35,6 +36,7 @@ async function init() {
     // Identify user role and get initial lists
     const orphanData = params.get("orphans");
     const empData = params.get("employees");
+    state.imgbbKey = params.get("imgbb");
 
     // Safe decoding: tries decodeURIComponent, fallback to B64
     function robustDecode(str) {
@@ -171,12 +173,15 @@ function initEmployeeScreen() {
         document.getElementById("btn-check-out").disabled = false;
     });
 
+    const btnInEmp = document.getElementById("btn-check-in");
+    const btnOutEmp = document.getElementById("btn-check-out");
+
     document.getElementById("btn-check-in").addEventListener("click", () => {
-        submitData("check_in");
+        submitData("check_in", null, btnInEmp);
     });
 
     document.getElementById("btn-check-out").addEventListener("click", () => {
-        submitData("check_out");
+        submitData("check_out", null, btnOutEmp);
     });
 }
 
@@ -211,8 +216,8 @@ function initSupervisorScreen() {
         btnOut.disabled = !ok;
     }
 
-    btnIn.addEventListener("click", () => submitData("check_in", state.targetUserId));
-    btnOut.addEventListener("click", () => submitData("check_out", state.targetUserId));
+    btnIn.addEventListener("click", () => submitData("check_in", state.targetUserId, btnIn));
+    btnOut.addEventListener("click", () => submitData("check_out", state.targetUserId, btnOut));
 }
 
 // CAMERA HELPER
@@ -246,14 +251,61 @@ function setupCamera(inputId, imgId, placeholderId, btnId, retakeId, onCapture) 
 }
 
 // COMMUNICATION
-function submitData(action, targetId = null) {
+async function submitData(action, targetId = null, btn = null) {
     if (!state.photoBase64) return;
 
-    sendData({
-        action: action,
-        image: state.photoBase64,
-        target_user_id: targetId || state.user.id
-    });
+    let originalText = "";
+    if (btn) {
+        originalText = btn.textContent;
+        btn.textContent = "⌛ Отправка...";
+        btn.disabled = true;
+    }
+
+    try {
+        let payloadImage = state.photoBase64;
+
+        // Try to upload to ImgBB client-side to save Telegram bandwidth
+        if (state.imgbbKey) {
+            const uploadedUrl = await uploadToImgBB(state.photoBase64, state.imgbbKey);
+            if (uploadedUrl) {
+                payloadImage = uploadedUrl;
+            }
+        }
+
+        sendData({
+            action: action,
+            image: payloadImage,
+            target_user_id: targetId || state.user.id
+        });
+    } catch (e) {
+        console.error("Submit error", e);
+        alert("Ошибка отправки: " + e.message);
+        if (btn) {
+            btn.textContent = originalText;
+            btn.disabled = false;
+        }
+    }
+}
+
+async function uploadToImgBB(base64, key) {
+    try {
+        const formData = new FormData();
+        formData.append("key", key);
+        formData.append("image", base64);
+
+        const response = await fetch("https://api.imgbb.com/1/upload", {
+            method: "POST",
+            body: formData
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            return data.data.url;
+        }
+    } catch (e) {
+        console.error("ImgBB upload failed", e);
+    }
+    return null;
 }
 
 function sendData(data) {

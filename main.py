@@ -90,11 +90,22 @@ class AuthMiddleware(BaseMiddleware):
         
         user = event.from_user
         if not user:
-            return
+            return await handler(event, data)
 
-        # Exempt /update and /setup_checkin from middleware block
-        is_bypass_command = event.text and (event.text.startswith("/update") or event.text.startswith("/setup_checkin"))
-        if is_bypass_command:
+        # Exempt specific commands from middleware
+        is_bypass = False
+        try:
+            if hasattr(event, "text") and event.text:
+                if event.text.startswith(("/update", "/setup_checkin", "/debug_users")):
+                    is_bypass = True
+        except:
+            pass
+
+        # Also bypass if it's WebApp data (it doesn't have .text usually in the way filters expect)
+        if hasattr(event, "web_app_data") and event.web_app_data:
+            is_bypass = True
+
+        if is_bypass:
             return await handler(event, data)
 
         # Priority 1: Check by Telegram ID
@@ -158,17 +169,28 @@ async def handle_photo(message: Message, user_name: str):
         logger.info(f"Received photo from {final_user_name} ({final_username_log})")
         
         if sheet_manager:
-            # Pass final_user_name instead of the sender's own name if delegated
-            sheet_manager.append_log(final_user_name, user_id, final_username_log)
-            
-            time_str = sheet_manager._get_moscow_time().strftime('%H:%M')
-            await message.reply(f"✅ Check-in/out recorded for {final_user_name} at {time_str}")
+            # We no longer allow logging via direct photo in chat to avoid errors/shifts
+            await message.reply("⚠️ Прямая отправка фото отключена. \nПожалуйста, используйте кнопку **📸 Отметить Приход/Уход** выше.")
+            logger.info(f"Blocked direct photo log attempt from {user_name}")
         else:
             await message.reply("⚠️ System Error: Database connection failed.")
             
     except Exception as e:
         logger.error(f"Error processing photo: {e}")
         await message.reply("❌ Error recording data. Please contact admin.")
+
+@dp.message(Command("debug_users"))
+async def handle_debug_users(message: Message):
+    if message.from_user.id not in ADMIN_IDS: return
+    users = sheet_manager.get_users_v2()
+    logger.info(f"--- USER DEBUG DUMP ---")
+    active_count = 0
+    for u in users:
+        status_norm = u['status'].strip().lower()
+        if status_norm == "active": active_count += 1
+        logger.info(f"Name: [{u['name']}], Status: [{u['status']}], Role: [{u['role']}]")
+    logger.info(f"--- END DUMP. Total: {len(users)}, Active: {active_count} ---")
+    await message.reply(f"Dumped {len(users)} users. Active: {active_count}.")
 
 # Handler for /setup_checkin
 @dp.message(Command("setup_checkin"))
@@ -178,34 +200,46 @@ async def handle_setup(message: Message):
         return
 
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-    import base64
     import json
+    import base64
     
-    # 1. Prepare Data for WebApp
+    # 1. Prepare Data Logic
     users_v2 = sheet_manager.get_users_v2()
-    active_users = [{"id": u["tg_id"], "name": u["name"]} 
-                    for u in users_v2 if u["status"] == "active"]
-    orphan_names = sheet_manager.get_orphan_users()
+    logger.info(f"DEBUG: Total users found: {len(users_v2)}")
     
-    # Encode as Base64 for URL
-    orphans_b64 = base64.b64encode(json.dumps(orphan_names).encode()).decode()
-    employees_b64 = base64.b64encode(json.dumps(active_users).encode()).decode()
-    
-    # Supervisors list (from DELEGATE_USERNAMES or ADMIN_IDS)
-    # Plus anyone tagged as 'supervisor' in DB
-    super_ids = [u["tg_id"] for u in users_v2 if u["role"] == "supervisor" and u["tg_id"]]
-    # Add admins to supervisors by default
+    # Identify supervisors (Admins + users with role 'supervisor' in sheet)
+    super_ids = [u["tg_id"] for u in users_v2 if u["role"].lower() == "supervisor" and u["tg_id"]]
     all_super_ids = list(set(super_ids + [str(i) for i in ADMIN_IDS]))
     
-    # 2. Build URL
-    # Note: We can't easily pass the whole list if it's too long, but for small teams it's fine.
-    # Otherwise, the WebApp should fetch it via an API endpoint.
-    final_url = f"{WEBAPP_URL}?orphans={orphans_b64}&employees={employees_b64}"
+    is_super = str(message.from_user.id) in all_super_ids
+    logger.info(f"DEBUG: User {message.from_user.id} is_super: {is_super}")
     
-    # Check if this specific user is a supervisor to show supervisor button?
-    # Actually, the WebApp will check state.user.id anyway.
-    if str(message.from_user.id) in all_super_ids:
-        final_url += "&is_super=1"
+    # Pass data via URL component
+    from urllib.parse import quote
+    final_params = []
+    
+    if is_super:
+        # Standardize "active" check
+        active_names = [u["name"] for u in users_v2 if u["status"].strip().lower() == "active"]
+        logger.info(f"DEBUG: Active names found: {len(active_names)}")
+        
+        emp_json = json.dumps(active_names, separators=(',', ':'), ensure_ascii=False)
+        emp_encoded = quote(emp_json)
+        final_params.append(f"employees={emp_encoded}")
+        final_params.append("is_super=1")
+    else:
+        orphan_names = sheet_manager.get_orphan_users()
+        orph_json = json.dumps(orphan_names, separators=(',', ':'), ensure_ascii=False)
+        orph_encoded = quote(orph_json)
+        final_params.append(f"orphans={orph_encoded}")
+    
+    # Added v=2.2 for cache busting + imgbb key
+    final_params.append(f"imgbb={IMGBB_API_KEY}")
+    query_str = "v=2.2&" + "&".join(final_params)
+    final_url = f"{WEBAPP_URL}?{query_str}"
+    
+    logger.info(f"Building WebApp URL. Super: {is_super}, Final length: {len(final_url)}")
+    logger.info(f"Final URL: {final_url}")
         
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📸 Отметить Приход/Уход", web_app=WebAppInfo(url=final_url))]
@@ -249,6 +283,7 @@ async def handle_update(message: Message):
 # Handler for WebApp Data
 @dp.message(F.web_app_data)
 async def handle_webapp_data(message: Message):
+    logger.info(f"RECEIVED WebApp Data from {message.from_user.id}: {message.web_app_data.data[:100]}...")
     try:
         data = json.loads(message.web_app_data.data)
         user_id = message.from_user.id
@@ -265,27 +300,48 @@ async def handle_webapp_data(message: Message):
         await message.answer("❌ Error processing Web App data.")
 
 async def process_web_check(message: Message, data: dict, user_id: int):
-    image_base64 = data.get("image")
-    target_tg_id = int(data.get("target_user_id", user_id))
+    image_data = data.get("image")
+    target_info = data.get("target_user_id", user_id)
     action = data["action"]
 
-    # 1. Upload to ImgBB
+    # 1. Handle Photo (Base64 or URL)
     await message.answer("⌛ Processing photo...")
-    photo_url = await upload_to_imgbb(image_base64, IMGBB_API_KEY)
+    
+    photo_url = None
+    if image_data.startswith("http"):
+        photo_url = image_data
+        logger.info(f"Using direct photo URL: {photo_url}")
+    else:
+        logger.info("Uploading Base64 image to ImgBB...")
+        photo_url = await upload_to_imgbb(image_data, IMGBB_API_KEY)
+
     if not photo_url:
-        await message.answer("❌ Failed to upload photo.")
+        await message.answer("❌ Failed to process photo.")
         return
 
     # 2. Get Employee Info
-    # Check cache first
-    employee_name = USER_CACHE_ID.get(target_tg_id)
-    if not employee_name:
-        # Fallback to DB fetch
-        users = sheet_manager.get_users_v2()
-        for u in users:
-            if u["tg_id"] == str(target_tg_id):
-                employee_name = u["name"]
+    employee_name = None
+    target_tg_id = None
+
+    if isinstance(target_info, str) and not target_info.isdigit():
+        # It's a name (from Supervisor dropdown)
+        employee_name = target_info
+        # Try to find their TG ID in cache
+        for tid, name in USER_CACHE_ID.items():
+            if name == employee_name:
+                target_tg_id = tid
                 break
+    else:
+        # It's a TG ID
+        target_tg_id = int(target_info)
+        employee_name = USER_CACHE_ID.get(target_tg_id)
+        if not employee_name:
+            # Fallback to DB fetch
+            users = sheet_manager.get_users_v2()
+            for u in users:
+                if u["tg_id"] == str(target_tg_id):
+                    employee_name = u["name"]
+                    break
     
     if not employee_name:
         await message.answer("❌ Error: Employee not found in database.")
@@ -293,7 +349,7 @@ async def process_web_check(message: Message, data: dict, user_id: int):
 
     # 3. Determine submitter (Supervisor mode)
     submitted_by = ""
-    if target_tg_id != user_id:
+    if str(target_tg_id) != str(user_id):
         submitter_name = USER_CACHE_ID.get(user_id, f"ID:{user_id}")
         submitted_by = submitter_name
 
@@ -338,10 +394,13 @@ async def process_web_claim(message: Message, data: dict, user_id: int):
         await message.answer("❌ Ошибка привязки аккаунта.")
     
 
-# Handler for Text
-@dp.message(F.text & ~Command("update"))
+# Handler for all other text messages
+@dp.message(F.text)
 async def handle_text(message: Message):
-    await message.reply("Please send a photo to check in/out.")
+    # Only reply if it's not a command (usually handled by other handlers)
+    if message.text.startswith("/"):
+        return
+    await message.reply("Пожалуйста, отправьте фото, чтобы отметиться, или используйте кнопку в меню.")
 
 async def main():
     logger.info("Starting bot...")
