@@ -11,7 +11,8 @@ const state = {
     photoBase64: null,
     orphanList: [],
     employeeList: [],
-    targetUserId: null
+    targetUserId: null,
+    groupId: null
 };
 
 // Start
@@ -35,6 +36,7 @@ async function init() {
     // Identify user role and get initial lists
     const orphanData = params.get("orphans");
     const empData = params.get("employees");
+    state.groupId = params.get("g");
 
     // Safe decoding: tries decodeURIComponent, fallback to B64
     function robustDecode(str) {
@@ -252,7 +254,8 @@ function submitData(action, targetId = null) {
     sendData({
         action: action,
         image: state.photoBase64,
-        target_user_id: targetId || state.user.id
+        target_user_id: targetId || state.user.id,
+        group_id: state.groupId
     });
 }
 
