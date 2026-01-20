@@ -449,16 +449,22 @@ class GoogleSheetManager:
             sheet = self.gc.open_by_key(self._current_sheet_key)
             wks = sheet.worksheet("DB_Logs")
             
+            # MANUAL ROW CALCULATION TO PREVENT SHIFTS
+            # Find the next available row based on Column A
+            col_a = wks.col_values(1)
+            next_row = len(col_a) + 1
+            
             date_str = now.strftime("%d.%m.%Y")
             time_str = now.strftime("%H:%M")
             
             # Row Format: Date, Time, Employee Name, Type, Photo URL, Submitted By, Tg_ID
             row = [date_str, time_str, user_name, log_type, photo_url, submitted_by, str(telegram_id)]
             
-            # Append using USER_ENTERED to ensure dates are parsed correctly by Sheets
-            wks.append_row(row, value_input_option="USER_ENTERED")
+            # Update specific range A{next_row}
+            range_name = f"A{next_row}"
+            wks.update(range_name, [row], value_input_option="USER_ENTERED")
             
-            logger.info(f"Logged {log_type} for {user_name} at {time_str}")
+            logger.info(f"Logged {log_type} for {user_name} at {time_str} (Row {next_row})")
             
         except Exception as e:
             logger.error(f"Failed to append log: {e}")
