@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Учёт Времени v2.0</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div id="app">
+        <!-- Loader -->
+        <div id="loading">
+            <div class="spinner"></div>
+            <p>Загрузка системы...</p>
+        </div>
+    </div>
+
+    <!-- Screen Templates -->
+
+    <!-- ORPHAN / CLAIM FLOW -->
+    <template id="template-orphan">
+        <div class="screen orphan-screen">
+            <h2>🔎 Идентификация</h2>
+            <p class="subtitle">Ваш аккаунт не привязан. Выберите ваше имя из списка ниже:</p>
+            <div class="form-group">
+                <label for="orphan-select">Сотрудник:</label>
+                <select id="orphan-select">
+                    <option value="">-- Выберите из списка --</option>
+                </select>
+            </div>
+            <p class="warning-text">⚠️ Внимание! Это действие будет опубликовано в общей группе для подтверждения вашей
+                личности.</p>
+            <button id="btn-claim" class="btn primary" disabled>✅ Это я, привязать аккаунт</button>
+        </div>
+    </template>
+
+    <!-- EMPLOYEE FLOW -->
+    <template id="template-employee">
+        <div class="screen employee-screen">
+            <h2 id="greeting">Здравствуйте!</h2>
+            <div class="camera-section">
+                <div class="preview-box">
+                    <img id="photo-preview" alt="Превью">
+                    <div id="camera-placeholder">
+                        <span class="icon">📷</span>
+                        <p>Нажмите кнопку ниже,<br>чтобы сделать фото</p>
+                    </div>
+                </div>
+                <input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
+                <button id="btn-snap" class="btn secondary">📸 Сделать фото (Камера)</button>
+                <button id="btn-retake" class="btn link" style="display:none">Переснять</button>
+            </div>
+
+            <div class="action-grid">
+                <button id="btn-check-in" class="btn success" disabled>🟢 НАЧАЛ РАБОТУ</button>
+                <button id="btn-check-out" class="btn danger" disabled>🔴 ЗАКОНЧИЛ РАБОТУ</button>
+            </div>
+        </div>
+    </template>
+
+    <!-- SUPERVISOR FLOW (Proxy) -->
+    <template id="template-supervisor">
+        <div class="screen supervisor-screen">
+            <h2>👷 Режим Бригадира</h2>
+            <div class="form-group">
+                <label for="target-select">Сотрудник:</label>
+                <select id="target-select">
+                    <option value="">-- Выберите сотрудника --</option>
+                </select>
+            </div>
+
+            <div class="camera-section">
+                <div class="preview-box">
+                    <img id="photo-preview-super" alt="Превью">
+                    <div id="camera-placeholder-super">
+                        <span class="icon">📷</span>
+                    </div>
+                </div>
+                <input type="file" id="camera-input-super" accept="image/*" capture="environment" hidden>
+                <button id="btn-snap-super" class="btn secondary">📸 Сделать фото</button>
+            </div>
+
+            <div class="action-grid">
+                <button id="btn-super-in" class="btn success" disabled>🟢 Приход</button>
+                <button id="btn-super-out" class="btn danger" disabled>🔴 Уход</button>
+            </div>
+        </div>
+    </template>
+
+    <!-- Scripts -->
+    <!-- Scripts -->
+    <script src="app.js?v=2.2"></script>
+</body>
+
+</html>
