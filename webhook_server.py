@@ -168,24 +168,26 @@ async def handle_checkin(request: Request):
             t_user = next((u for u in users if u["name"] == final_employee_name), None)
             target_tg_id = t_user["tg_id"] if t_user else ""
         else:
-            # Self mode
-            u_user = next((u for u in users if u["tg_id"] == user_id), None)
+            # Self mode: Prioritize ID lookup
+            u_user = next((u for u in users if str(u["tg_id"]) == user_id), None)
             if u_user:
                 final_employee_name = u_user["name"]
                 target_tg_id = user_id
             else:
-                # Fallback to name from request if not found by ID (orphan who just claimed?)
+                # Fallback to name from request (only for fresh claims)
                 final_employee_name = employee_name or "Сотрудник"
                 target_tg_id = user_id
 
-        if not final_employee_name:
-            return {"ok": False, "error": "Employee not identified"}
+        if not final_employee_name or final_employee_name == "Сотрудник":
+             # Last resort deep lookup
+             found = sheet_manager.find_user(tg_id=user_id)
+             if found:
+                 final_employee_name = found["name"]
 
         # 3. Identify Submitter (Submitted By)
         submitted_by = ""
         if target_info:
-            # Supervisor is submittor
-            s_user = next((u for u in users if u["tg_id"] == user_id), None)
+            s_user = next((u for u in users if str(u["tg_id"]) == user_id), None)
             submitted_by = s_user["name"] if s_user else f"ID:{user_id}"
 
         # 4. Log to Google Sheets
@@ -195,7 +197,7 @@ async def handle_checkin(request: Request):
                 user_name=final_employee_name,
                 telegram_id=target_tg_id or user_id,
                 log_type=log_type,
-                photo_url="-", # Binary send to TG, no public URL needed here
+                photo_url="-",
                 submitted_by=submitted_by
             )
         except Exception as e_sheet:
@@ -203,7 +205,6 @@ async def handle_checkin(request: Request):
 
         # 5. Send Report to Telegram
         from datetime import datetime
-        # Get Moscow Time via sheets_manager if possible, or just standard
         now_time = datetime.now().strftime("%H:%M")
         status_emoji = "🟢" if action == "check_in" else "🔴"
         status_text = "НАЧАЛ РАБОТУ" if action == "check_in" else "ЗАКОНЧИЛ РАБОТУ"
@@ -229,7 +230,6 @@ async def handle_checkin(request: Request):
             
             if tg_resp.status_code != 200:
                 logger.error(f"Telegram API Error: {tg_resp.text}")
-                # We still return 'ok' if sheet log succeeded, but maybe with warning
                 return {"ok": True, "warning": "Log saved, but Telegram delivery failed"}
 
         return {"ok": True}
@@ -256,7 +256,7 @@ async def handle_claim(request: Request):
         logger.info(f"Claim request: {user_id} (@{username}) -> {full_name}")
 
         if sheet_manager.bind_telegram_id(user_id, full_name):
-            # Find the role from the sheet to return to WebApp
+            # API Consistency: ensure we return 'name' to the frontend
             role = "employee"
             try:
                 users = sheet_manager.get_users_v2()
@@ -285,6 +285,7 @@ async def handle_claim(request: Request):
                     timeout=10.0
                 )
             
+            # CRITICAL: Return 'name' to match app.js expectation
             return {"ok": True, "name": full_name, "role": role}
         else:
             return {"ok": False, "error": "Failed to bind ID in sheet"}

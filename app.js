@@ -130,38 +130,33 @@ async function sendData(data, btn = null) {
             username: state.user.username || "Unknown"
         };
 
-        if (!state.apiUrl) {
-            throw new Error("API URL missing (w param)");
-        }
+        if (!state.apiUrl) throw new Error("API URL missing");
 
         const claimApiUrl = state.apiUrl.replace("/api/checkin", "/api/claim");
         console.log("Binding account via:", claimApiUrl);
 
         const response = await fetch(claimApiUrl, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Bypass-Tunnel-Reminder': 'true',
-                'ngrok-skip-browser-warning': 'true'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
 
-        if (response.ok) {
-            const result = await response.json();
+        const result = await response.json();
+
+        if (response.ok && result.ok) {
             console.log("Bind success:", result);
 
-            // Update state with new identity
-            state.employeeName = result.name;
+            // Standardize: ensure result.name is used to avoid undefined
+            state.employeeName = result.name || data.full_name;
             state.role = (result.role === 'supervisor') ? 'supervisor' : 'employee';
 
-            // Success Transition
+            // Success Transition Overlay
             const overlay = document.createElement("div");
-            overlay.style = "position:fixed;top:0;left:0;width:100%;height:100%;background:#0d0d12;display:flex;flex-direction:column;justify-content:center;align-items:center;z-index:9999;color:white;text-align:center;padding:20px;backdrop-filter:blur(20px);";
+            overlay.className = "success-overlay";
             overlay.innerHTML = `
-                <div style="font-size:100px; margin-bottom: 20px; animation: scaleUp 0.5s ease-out;">✅</div>
-                <h2 style="background:none;-webkit-text-fill-color:white;">Успешно!</h2>
-                <p style="font-size:18px; opacity:0.8; margin-top:10px;">Аккаунт <b>${result.name}</b> привязан.<br>Загружаем терминал...</p>
+                <div style="font-size:80px; margin-bottom: 20px;">✅</div>
+                <h2>Успешно!</h2>
+                <p>Вы вошли как <b>${state.employeeName}</b></p>
             `;
             document.body.appendChild(overlay);
 
@@ -171,17 +166,11 @@ async function sendData(data, btn = null) {
             }, 2000);
 
         } else {
-            const errBody = await response.text();
-            console.error("Bind failed:", errBody);
-            showToast("Ошибка привязки. Проверьте список сотрудников.");
-            if (btn) {
-                btn.disabled = false;
-                btn.textContent = btn._originalText;
-            }
+            throw new Error(result.error || "Ошибка привязки");
         }
     } catch (e) {
-        console.error("Bind network error:", e);
-        showToast("Ошибка сети: " + e.message);
+        console.error("Bind error:", e);
+        showToast(e.message);
         if (btn) {
             btn.disabled = false;
             btn.textContent = btn._originalText;

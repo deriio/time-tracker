@@ -103,21 +103,22 @@ class AuthMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         tg_id = str(user.id)
-        username = user.username.lower() if user.username else ""
+        raw_username = user.username or ""
+        norm_username = sheet_manager.normalize_username(raw_username)
         
         # 1. Check ID in cache
         user_data = USER_CACHE_ID.get(tg_id)
         
         # 2. Check Username in cache (and Auto-bind)
-        if not user_data and username:
-            user_data = USER_CACHE_UNAME.get(username)
+        if not user_data and norm_username:
+            user_data = USER_CACHE_UNAME.get(norm_username)
             if user_data:
                 # Auto-bind ID in Sheets and Update Cache
-                bound_user = sheet_manager.auto_bind_user(username, tg_id)
+                bound_user = sheet_manager.auto_bind_user(norm_username, tg_id)
                 if bound_user:
                     user_data = bound_user
                     USER_CACHE_ID[tg_id] = user_data
-                    logger.info(f"Smart Auth: Auto-bound @{username} to ID {tg_id}")
+                    logger.info(f"Smart Auth: Auto-bound @{norm_username} to ID {tg_id}")
 
         if user_data:
             data["user_name"] = user_data["name"]

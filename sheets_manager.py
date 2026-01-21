@@ -62,6 +62,12 @@ class GoogleSheetManager:
         # Format: "Timesheet_December_2025"
         return f"Timesheet_{date_obj.strftime('%B_%Y')}"
 
+    @staticmethod
+    def normalize_username(username: str) -> str:
+        """Standardizes username for consistent comparison."""
+        if not username: return ""
+        return str(username).replace("@", "").strip().lower()
+
     def get_users_v2(self):
         """
         Reads users from Config_Users with columns:
@@ -73,41 +79,35 @@ class GoogleSheetManager:
                 sheet = self.gc.open_by_key(self.template_file_id)
                 wks = sheet.worksheet("Config_Users")
                 raw_values = wks.get("A2:E")
+                if not raw_values: return []
                 
                 users = []
                 for row in raw_values:
-                    if len(row) >= 1:
-                        # Normalize username (strip @ and lowercase)
-                        raw_username = row[1].strip() if len(row) > 1 else ""
-                        norm_username = raw_username.replace("@", "").lower() if raw_username else ""
-                        
+                    if len(row) >= 1 and row[0].strip():
                         users.append({
                             "name": row[0].strip(),
-                            "username": norm_username,
+                            "username": self.normalize_username(row[1]) if len(row) > 1 else "",
                             "tg_id": str(row[2]).strip() if len(row) > 2 else "",
                             "role": row[3].strip().lower() if len(row) > 3 else "employee",
                             "status": row[4].strip().lower() if len(row) > 4 else "active"
                         })
                 return users
             except Exception as e:
-                if attempt == 2:
-                    logger.error(f"Failed to load users: {e}")
-                    return []
+                logger.warning(f"Attempt {attempt+1} failed to load users: {e}")
+                if attempt == 2: return []
                 time.sleep(1)
         return []
 
     def find_user(self, tg_id: str = None, username: str = None):
-        """
-        Finds a user by ID or Username.
-        Returns user dict if found, else None.
-        """
+        """Finds active user by ID or Normalized Username."""
         users = self.get_users_v2()
-        norm_username = username.replace("@", "").lower() if username else None
+        norm_username = self.normalize_username(username) if username else None
+        target_id = str(tg_id).strip() if tg_id else None
         
         # 1. Primary check by ID
-        if tg_id:
+        if target_id:
             for u in users:
-                if u["tg_id"] == str(tg_id) and u["status"] == "active":
+                if u["tg_id"] == target_id and u["status"] == "active":
                     return u
         
         # 2. Secondary check by Username
@@ -115,42 +115,38 @@ class GoogleSheetManager:
             for u in users:
                 if u["username"] == norm_username and u["status"] == "active":
                     return u
-                    
         return None
 
     def auto_bind_user(self, username: str, tg_id: str):
-        """
-        Binds Telegram ID to a user if username matches and ID is empty.
-        """
-        if not username: return None
+        """Binds Telegram ID automatically if username matches and ID slot is empty."""
+        norm_search = self.normalize_username(username)
+        if not norm_search: return None
         
-        norm_username = username.replace("@", "").lower()
         try:
             sheet = self.gc.open_by_key(self.template_file_id)
             wks = sheet.worksheet("Config_Users")
-            raw_values = wks.get_all_values() # Include header
+            raw_values = wks.get_all_values()
             
             for idx, row in enumerate(raw_values):
-                if idx == 0: continue # Skip header
+                if idx == 0: continue
+                # Column B (index 1)
+                row_username = self.normalize_username(row[1]) if len(row) > 1 else ""
                 
-                # Column B (index 1) is Username
-                row_username = row[1].strip().replace("@", "").lower() if len(row) > 1 else ""
-                
-                if row_username == norm_username:
-                    # Found user! Update Column C (index 2)
+                if row_username == norm_search:
+                    # Update Column C (index 2)
                     wks.update_cell(idx + 1, 3, str(tg_id))
-                    logger.info(f"Auto-bound ID {tg_id} to username @{username}")
+                    logger.info(f"SUCCESS: Auto-bound ID {tg_id} to @{norm_search}")
                     
                     return {
                         "name": row[0].strip(),
-                        "username": norm_username,
+                        "username": row_username,
                         "tg_id": str(tg_id),
                         "role": row[3].strip().lower() if len(row) > 3 else "employee",
                         "status": "active"
                     }
             return None
         except Exception as e:
-            logger.error(f"Auto-bind failed: {e}")
+            logger.error(f"CRITICAL: Auto-bind logic failed: {e}")
             return None
 
     def get_orphan_users(self):
