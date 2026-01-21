@@ -86,12 +86,31 @@ async function init() {
         }
     }
 
-    // Fallback if no user data but orphans exist
+    // Fallback logic
     if (!state.role) {
-        state.role = (state.orphanList.length > 0) ? "orphan" : "orphan";
+        if (state.orphanList.length > 0) {
+            state.role = "orphan";
+        } else {
+            state.role = "unauthorized"; // Show error if no roles found
+        }
     }
 
+    console.log("Final State:", { role: state.role, name: state.employeeName, orphans: state.orphanList.length });
     renderScreen();
+}
+
+function initUnauthorizedScreen() {
+    const app = document.getElementById("app");
+    if (app) {
+        app.innerHTML = `
+            <div class="screen">
+                <h2>⛔ Доступ ограничен</h2>
+                <p style="text-align:center">Ваш аккаунт не найден в системе и нет доступных имен для регистрации.</p>
+                <p style="text-align:center;font-size:0.8em;color:#888;">ID: ${state.user.id || 'Неизвестен'}</p>
+                <button class="btn link" onclick="location.reload()">🔄 Обновить</button>
+            </div>
+        `;
+    }
 }
 
 async function sendData(data) {
@@ -117,14 +136,28 @@ async function sendData(data) {
         });
 
         if (response.ok) {
-            document.body.innerHTML = `
-                <div style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;background-color:#000;color:white;text-align:center;padding:20px;">
-                     <div style="font-size:80px;">✅</div>
-                     <h2 style="margin-top:20px;">Готово!</h2>
-                     <p>Ваш аккаунт привязан. Теперь вы можете пользоваться терминалом.</p>
-                </div>
+            const result = await response.json();
+
+            // 1. Update State
+            state.employeeName = result.name;
+            state.role = (result.role === 'supervisor') ? 'supervisor' : 'employee';
+
+            // 2. Visual Feedback (Overlay)
+            const overlay = document.createElement("div");
+            overlay.style = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);display:flex;flex-direction:column;justify-content:center;align-items:center;z-index:9999;color:white;text-align:center;padding:20px;";
+            overlay.innerHTML = `
+                <div style="font-size:80px;">✅</div>
+                <h2 style="margin-top:20px;">Готово!</h2>
+                <p>Ваш аккаунт привязан.<br>Открываем терминал...</p>
             `;
-            setTimeout(() => tg.close(), 3000);
+            document.body.appendChild(overlay);
+
+            // 3. Transition after short delay
+            setTimeout(() => {
+                overlay.remove();
+                renderScreen();
+            }, 2000);
+
         } else {
             alert("Ошибка привязки. Обратитесь к админу.");
             if (btn) btn.disabled = false;
@@ -149,20 +182,8 @@ function renderScreen() {
 
     if (state.role === "orphan") initOrphanScreen();
     if (state.role === "employee") initEmployeeScreen();
-    if (state.role === "supervisor") {
-        initSupervisorScreen();
-        // Inline Debug if empty
-        if (state.employeeList.length === 0) {
-            const select = document.getElementById("target-select");
-            const debugP = document.createElement("p");
-            debugP.style.color = "orange";
-            debugP.style.fontSize = "10px";
-            debugP.style.marginTop = "5px";
-            const rawLen = (params.get("employees") || "").length;
-            debugP.textContent = `Внимание: Список пуст.`;
-            select.parentNode.appendChild(debugP);
-        }
-    }
+    if (state.role === "supervisor") initSupervisorScreen();
+    if (state.role === "unauthorized") initUnauthorizedScreen();
 }
 
 // ORPHAN SCREEN

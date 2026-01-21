@@ -249,19 +249,26 @@ async def handle_setup(message: Message, bot: Bot):
         j = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
         return base64.urlsafe_b64encode(j.encode('utf-8')).decode('ascii').rstrip('=')
 
-    # Pass everything in the URL
-    # Pass everything in the URL
     final_params = []
-    
-    logger.info(f"Generating URL for {user_id}. Super: {is_super}. Admins: {ADMIN_IDS}")
-
     # NEW: Send all active users with roles to the WebApp for ID-based logic
     active_users_compact = []
+    registered_ids = set()
+    
     for u in users_v2:
         if u["status"].strip().lower() == "active" and u["tg_id"]:
+            tid = str(u["tg_id"])
             role_char = "s" if u["role"].lower().strip() == "supervisor" else "e"
-            active_users_compact.append([str(u["tg_id"]), u["name"], role_char])
+            active_users_compact.append([tid, u["name"], role_char])
+            registered_ids.add(tid)
     
+    # Ensure all ADMINS are in the registered list as supervisors
+    for admin_id in ADMIN_IDS:
+        aid_str = str(admin_id)
+        if aid_str not in registered_ids:
+            # Add with a generic name if not in sheet, or find their name if possible
+            active_users_compact.append([aid_str, "АДМИНИСТРАТОР", "s"])
+            registered_ids.add(aid_str)
+
     final_params.append(f"users={b64_safe(active_users_compact)}")
     
     orphan_names = sheet_manager.get_orphan_users()
@@ -276,7 +283,9 @@ async def handle_setup(message: Message, bot: Bot):
         final_params.append(f"w={webhook_endpoint}")
 
     
-    query_str = "v=6.0&" + "&".join(final_params)
+    logger.info(f"Generating URL for Group {message.chat.id}. (Reg: {len(active_users_compact)}, Orphans: {len(orphan_names)})")
+    
+    query_str = "v=8.0&" + "&".join(final_params)
     
     # Use loader.html to bypass cache
     base_url = WEBAPP_URL.rstrip('/') + "/loader.html"

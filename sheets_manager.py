@@ -69,25 +69,31 @@ class GoogleSheetManager:
         Returns:
             - list of dicts: [{name, username, tg_id, role, status}]
         """
-        try:
-            sheet = self.gc.open_by_key(self.template_file_id)
-            wks = sheet.worksheet("Config_Users")
-            raw_values = wks.get("A2:E")
-            
-            users = []
-            for row in raw_values:
-                if len(row) >= 1:
-                    users.append({
-                        "name": row[0].strip(),
-                        "username": row[1].strip().replace("@", "").lower() if len(row) > 1 else "",
-                        "tg_id": str(row[2]).strip() if len(row) > 2 else "",
-                        "role": row[3].strip() if len(row) > 3 else "employee",
-                        "status": row[4].strip() if len(row) > 4 else "active"
-                    })
-            return users
-        except Exception as e:
-            logger.error(f"Failed to load users v2: {e}")
-            return []
+        import time
+        for attempt in range(3):
+            try:
+                sheet = self.gc.open_by_key(self.template_file_id)
+                wks = sheet.worksheet("Config_Users")
+                raw_values = wks.get("A2:E")
+                
+                users = []
+                for row in raw_values:
+                    if len(row) >= 1:
+                        users.append({
+                            "name": row[0].strip(),
+                            "username": row[1].strip().replace("@", "").lower() if len(row) > 1 else "",
+                            "tg_id": str(row[2]).strip() if len(row) > 2 else "",
+                            "role": row[3].strip() if len(row) > 3 else "employee",
+                            "status": row[4].strip() if len(row) > 4 else "active"
+                        })
+                return users
+            except Exception as e:
+                if attempt == 2:
+                    logger.error(f"Failed to load users v2 after 3 attempts: {e}")
+                    return []
+                logger.warning(f"Attempt {attempt+1} failed to load users: {e}. Retrying...")
+                time.sleep(1)
+        return []
 
     def get_orphan_users(self):
         """Returns list of names that have no Telegram ID linked."""

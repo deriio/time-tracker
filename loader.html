@@ -90,9 +90,19 @@
         </div>
     </template>
 
-    <!-- Scripts -->
-    <!-- Scripts -->
-    <script src="logic.js?v=NEW"></script>
+    <!-- Dynamic Script Loading -->
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const ver = urlParams.get('v') || '1.0';
+        console.log("Loading logic.js version:", ver);
+
+        const script = document.createElement('script');
+        script.src = `logic.js?v=${ver}`;
+        script.onerror = () => {
+            document.getElementById('app').innerHTML = '<div class="screen"><h2>❌</h2><p>Ошибка загрузки логики. Проверьте интернет.</p></div>';
+        };
+        document.body.appendChild(script);
+    </script>
 </body>
 
 </html>

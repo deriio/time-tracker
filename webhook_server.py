@@ -205,6 +205,16 @@ async def handle_claim(request: Request):
         logger.info(f"Claim request: {user_id} (@{username}) -> {full_name}")
 
         if sheet_manager.bind_telegram_id(user_id, full_name):
+            # Find the role from the sheet to return to WebApp
+            role = "employee"
+            try:
+                users = sheet_manager.get_users_v2()
+                user_record = next((u for u in users if str(u['tg_id']) == str(user_id)), None)
+                if user_record:
+                    role = user_record['role']
+            except:
+                pass
+
             # Send notification to Telegram
             user_display = f"@{username}" if username != "Unknown" else f"ID:{user_id}"
             caption = (f"✅ **Аккаунт привязан**\n\n"
@@ -224,7 +234,7 @@ async def handle_claim(request: Request):
                     timeout=10.0
                 )
             
-            return {"ok": True}
+            return {"ok": True, "name": full_name, "role": role}
         else:
             return {"ok": False, "error": "Failed to bind ID in sheet"}
 
