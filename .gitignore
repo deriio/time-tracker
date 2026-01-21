@@ -1,7 +1,51 @@
+# Environment variables
 .env
+
+# Credentials and tokens (SECURITY!)
 *.json
+!package.json
+!package-lock.json
+!tsconfig.json
+
+# Python
 __pycache__/
-*.log
 *.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# Photos directory
 photos/*
 !photos/.gitkeep
+
+# Temporary files
+temp_*.txt
+*.tmp
+*.bak
+*.swp
+*~
+
+# OS specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Executables
+*.exe
+*.dll
+*.so
+*.dylib
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
