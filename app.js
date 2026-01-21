@@ -259,7 +259,7 @@ function initOrphanScreen() {
 // EMPLOYEE SCREEN
 function initEmployeeScreen() {
     const greeting = document.getElementById("greeting");
-    if (greeting) greeting.textContent = `Здравствуйте, ${state.employeeName}!`;
+    if (greeting) greeting.textContent = `Здравствуйте!`; // Simplified as requested
 
     setupCamera("camera-input", "photo-preview", "camera-placeholder", "btn-snap", "btn-retake", () => {
         document.getElementById("btn-check-in").disabled = false;
@@ -281,9 +281,8 @@ function initSupervisorScreen() {
     const btnIn = document.getElementById("btn-super-in");
     const btnOut = document.getElementById("btn-super-out");
 
-    // Clear existing
+    // Clear and Fill selection
     select.innerHTML = '<option value="">-- Выберите сотрудника --</option>';
-
     state.employeeList.forEach(name => {
         const opt = document.createElement("option");
         opt.value = name;
@@ -292,7 +291,7 @@ function initSupervisorScreen() {
     });
 
     select.addEventListener("change", () => {
-        state.targetUserId = select.value; // Here we use Name as ID because we don't have map
+        state.targetUserId = select.value;
         validateSupervisor();
     });
 
@@ -301,6 +300,7 @@ function initSupervisorScreen() {
     });
 
     function validateSupervisor() {
+        // Must select someone AND take a photo
         const ok = state.targetUserId && state.photoBase64;
         btnIn.disabled = !ok;
         btnOut.disabled = !ok;

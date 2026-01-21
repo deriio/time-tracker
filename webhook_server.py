@@ -113,57 +113,78 @@ async def handle_checkin(request: Request):
     try:
         data = await request.json()
         photo_b64 = data.get("photo")
-        user_id = data.get("user_id")
+        user_id = str(data.get("user_id"))
         group_id = data.get("group_id")
         action = data.get("action")
-        employee_name = data.get("employee_name", "Сотрудник")
-        target_info = data.get("target_user_id")
+        # employee_name can be a string (from supervisor) or empty (will find by user_id)
+        employee_name = data.get("employee_name")
+        target_info = data.get("target_user_id") # Present if supervisor
         
-        logger.info(f"Received {action} from {employee_name} for group {group_id}")
+        logger.info(f"Identity check: user_id={user_id}, action={action}, target={target_info}")
 
         if not photo_b64:
             return {"ok": False, "error": "No photo"}
 
-        # 1. Decode Image
-        photo_bytes = base64.b64decode(photo_b64)
+        # 1. Fetch user records for identification
+        users = sheet_manager.get_users_v2()
+        
+        # 2. Identify Target Employee
+        final_employee_name = None
+        target_tg_id = None
+        
+        if target_info:
+            # Supervisor mode: target_info is the Name of the employee selected
+            final_employee_name = target_info
+            # Try to find target's TG ID
+            t_user = next((u for u in users if u["name"] == final_employee_name), None)
+            target_tg_id = t_user["tg_id"] if t_user else ""
+        else:
+            # Self mode
+            u_user = next((u for u in users if u["tg_id"] == user_id), None)
+            if u_user:
+                final_employee_name = u_user["name"]
+                target_tg_id = user_id
+            else:
+                # Fallback to name from request if not found by ID (orphan who just claimed?)
+                final_employee_name = employee_name or "Сотрудник"
+                target_tg_id = user_id
 
-        # 2. Log to Google Sheets
+        if not final_employee_name:
+            return {"ok": False, "error": "Employee not identified"}
+
+        # 3. Identify Submitter (Submitted By)
         submitted_by = ""
         if target_info:
-            # This is a supervisor action. user_id is the supervisor.
-            # We try to find the supervisor's name by their ID.
-            try:
-                all_users = sheet_manager.get_users_v2()
-                supervisor = next((u for u in all_users if str(u['tg_id']) == str(user_id)), None)
-                if supervisor:
-                    submitted_by = supervisor['name']
-                else:
-                    submitted_by = f"ID: {user_id}"
-            except Exception as e_sup:
-                logger.error(f"Failed to find supervisor name: {e_sup}")
-                submitted_by = f"ID: {user_id}"
+            # Supervisor is submittor
+            s_user = next((u for u in users if u["tg_id"] == user_id), None)
+            submitted_by = s_user["name"] if s_user else f"ID:{user_id}"
 
+        # 4. Log to Google Sheets
         try:
             log_type = "Приход" if action == "check_in" else "Уход"
             sheet_manager.append_log(
-                user_name=employee_name,
-                telegram_id=user_id,
+                user_name=final_employee_name,
+                telegram_id=target_tg_id or user_id,
                 log_type=log_type,
-                photo_url="-", # No storage requested
+                photo_url="-", # Binary send to TG, no public URL needed here
                 submitted_by=submitted_by
             )
         except Exception as e_sheet:
             logger.error(f"Sheet log failed: {e_sheet}")
 
-        # 3. Send to Telegram directly
-        # We use standard Bot API via httpx
+        # 5. Send Report to Telegram
         from datetime import datetime
+        # Get Moscow Time via sheets_manager if possible, or just standard
         now_time = datetime.now().strftime("%H:%M")
         status_emoji = "🟢" if action == "check_in" else "🔴"
         status_text = "НАЧАЛ РАБОТУ" if action == "check_in" else "ЗАКОНЧИЛ РАБОТУ"
-        caption = f"{status_emoji} **{employee_name}** {status_text} в {now_time}"
+        
+        caption = f"{status_emoji} **{final_employee_name}** {status_text}\n🕒 Время: {now_time}"
+        if submitted_by:
+            caption += f"\n✅ Подтвердил бригадир: {submitted_by}"
 
         async with httpx.AsyncClient() as client:
+            photo_bytes = base64.b64decode(photo_b64)
             files = {'photo': ('photo.jpg', photo_bytes, 'image/jpeg')}
             payload = {
                 'chat_id': group_id or user_id, 
@@ -179,12 +200,13 @@ async def handle_checkin(request: Request):
             
             if tg_resp.status_code != 200:
                 logger.error(f"Telegram API Error: {tg_resp.text}")
-                return {"ok": False, "error": "Telegram failed"}
+                # We still return 'ok' if sheet log succeeded, but maybe with warning
+                return {"ok": True, "warning": "Log saved, but Telegram delivery failed"}
 
         return {"ok": True}
 
     except Exception as e:
-        logger.error(f"Server Error: {e}")
+        logger.error(f"Critical error in handle_checkin: {e}")
         return {"ok": False, "error": str(e)}
 
 @app.post("/api/claim")
