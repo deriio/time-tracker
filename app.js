@@ -20,83 +20,59 @@ const state = {
 // Start
 async function init() {
     const params = new URLSearchParams(window.location.search);
-    const isDebug = params.get("debug") === "1";
-
-    console.log("WebApp Init", state.user);
-
-    // Mock user REMOVED to prevent 999999 ID issue.
-    // If no user, state.user.id will be undefined.
-
-    // Identify user role and get initial lists
-    const orphanData = params.get("orphans");
-    const userData = params.get("users");
     state.groupId = params.get("g");
-    state.apiUrl = params.get("w"); // Webhook server URL
+    state.apiUrl = params.get("w"); // Checkin endpoint: .../api/checkin
 
-    // Safe decoding: tries decodeURIComponent, fallback to B64
-    function robustDecode(str) {
-        if (!str) return null;
-        try {
-            // Try simple URL decode first
-            const decoded = decodeURIComponent(str);
-            if (decoded.startsWith('[') || decoded.startsWith('{')) return decoded;
-        } catch (e) { }
+    console.log("WebApp Init Starting...");
 
-        try {
-            const b64 = str.replace(/-/g, '+').replace(/_/g, '/');
-            const bin = atob(b64);
-            const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
-            return new TextDecoder().decode(bytes);
-        } catch (e) {
-            console.error("Decode error", e);
-            return null;
-        }
+    if (!state.apiUrl) {
+        showError("Критическая ошибка: отсутствует адрес API (параметр 'w'). Попросите админа пересоздать кнопку.");
+        return;
     }
 
-    if (orphanData) {
-        const decoded = robustDecode(orphanData);
-        if (decoded) {
-            try { state.orphanList = JSON.parse(decoded); } catch (e) { console.error("JSON error orphans", e); }
-        }
-    }
+    try {
+        // 1. Fetch Dynamic Config from our Server
+        const configUrl = state.apiUrl.replace("/api/checkin", "/api/config");
+        console.log("Fetching config from:", configUrl);
 
-    if (userData) {
-        const decoded = robustDecode(userData);
-        if (decoded) {
-            try {
-                const users = JSON.parse(decoded); // [[id, name, role], ...]
-                const myId = String(state.user.id);
-
-                // 1. Identify me in the list
-                const me = users.find(u => String(u[0]) === myId);
-
-                if (me) {
-                    state.employeeName = me[1];
-                    state.role = (me[2] === 's') ? 'supervisor' : 'employee';
-                    // For supervisor, we need the list of ALL active names
-                    state.employeeList = users.map(u => u[1]);
-                    console.log(`Identified as: ${state.employeeName} (${state.role})`);
-                } else {
-                    // Not found in registered users -> must be orphan or unauthorized
-                    state.role = "orphan";
-                }
-            } catch (e) {
-                console.error("JSON error users", e);
+        const response = await fetch(configUrl, {
+            headers: {
+                'Bypass-Tunnel-Reminder': 'true',
+                'ngrok-skip-browser-warning': 'true'
             }
-        }
-    }
+        });
 
-    // Fallback logic
-    if (!state.role) {
-        if (state.orphanList.length > 0) {
-            state.role = "orphan";
+        if (!response.ok) throw new Error(`Server status: ${response.status}`);
+
+        const config = await response.json();
+        if (!config.ok) throw new Error(config.error || "Unknown server error");
+
+        // 2. Map Data to State
+        state.orphanList = config.orphans || [];
+        const users = config.users || []; // [[id, name, role_char], ...]
+        const myId = String(state.user.id);
+
+        // 3. Identify User
+        const me = users.find(u => String(u[0]) === myId);
+
+        if (me) {
+            state.employeeName = me[1];
+            state.role = (me[2] === 's') ? 'supervisor' : 'employee';
+            // For supervisor, we need the names of all employees
+            state.employeeList = users.map(u => u[1]);
+            console.log(`Identified as: ${state.employeeName} (${state.role})`);
         } else {
-            state.role = "unauthorized"; // Show error if no roles found
+            // Not registered yet
+            state.role = "orphan";
         }
-    }
 
-    console.log("Final State:", { role: state.role, name: state.employeeName, orphans: state.orphanList.length });
-    renderScreen();
+        console.log("Init Complete. Role:", state.role);
+        renderScreen();
+
+    } catch (err) {
+        console.error("Initialization Failed:", err);
+        showError(`Ошибка загрузки данных: ${err.message}. Проверьте соединение с сервером.`);
+    }
 }
 
 function initUnauthorizedScreen() {

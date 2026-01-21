@@ -48,6 +48,35 @@ sheet_manager = GoogleSheetManager(
     template_file_id=TEMPLATE_FILE_ID
 )
 
+@app.get("/api/config")
+async def get_config():
+    """
+    Returns lists of active users and orphans for WebApp initialization.
+    This replaces passing large data via URL.
+    """
+    try:
+        users_v2 = sheet_manager.get_users_v2()
+        
+        # 1. Compact Active Users: [id, name, role_char]
+        active_users = []
+        for u in users_v2:
+            if u["status"] == "active":
+                tid = str(u["tg_id"]) if u["tg_id"] else ""
+                role_char = "s" if u["role"] == "supervisor" else "e"
+                active_users.append([tid, u["name"], role_char])
+        
+        # 2. Orphans: Names without IDs
+        orphan_names = [u["name"] for u in users_v2 if not u["tg_id"] and u["status"] == "active"]
+        
+        return {
+            "ok": True,
+            "users": active_users,
+            "orphans": orphan_names
+        }
+    except Exception as e:
+        logger.error(f"Config fetch failed: {e}")
+        return {"ok": False, "error": str(e)}
+
 @app.post("/api/upload")
 async def upload_photo(request: Request):
     """

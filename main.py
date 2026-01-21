@@ -191,46 +191,20 @@ async def handle_setup(message: Message, bot: Bot):
         logger.warning(f"Admin access denied for {message.from_user.id}")
         return
 
-    import json
-    import base64
-    
-    # Refresh cache to ensure we have latest IDs and Orphans
-    refresh_user_cache()
-    
-    def b64_safe(data):
-        j = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
-        return base64.urlsafe_b64encode(j.encode('utf-8')).decode('ascii').rstrip('=')
-
+    # No need to refresh/fetch users here anymore, WebApp will do it via API
     params = []
     
-    # 1. Active Users with roles
-    users_v2 = sheet_manager.get_users_v2()
-    active_users = []
-    for u in users_v2:
-        if u["status"] == "active":
-            tid = str(u["tg_id"]) if u["tg_id"] else ""
-            role_char = "s" if u["role"] == "supervisor" else "e"
-            active_users.append([tid, u["name"], role_char])
-    
-    # Add Admins as Supervisors just in case
-    reg_ids = {u[0] for u in active_users if u[0]}
-    for aid in ADMIN_IDS:
-        if str(aid) not in reg_ids:
-            active_users.append([str(aid), "АДМИНИСТРАТОР", "s"])
-
-    params.append(f"users={b64_safe(active_users)}")
-    
-    # 2. Orphans (names without IDs)
-    orphan_names = [u["name"] for u in users_v2 if not u["tg_id"] and u["status"] == "active"]
-    params.append(f"orphans={b64_safe(orphan_names)}")
-    
-    # 3. Context
+    # 1. Context
     params.append(f"g={message.chat.id}")
+    
+    # 2. API Endpoint base
     if WEBHOOK_SERVER_URL:
         params.append(f"w={WEBHOOK_SERVER_URL.rstrip('/')}/api/checkin")
 
-    query_str = "v=11.0&" + "&".join(params) # Upgraded to 11.0
+    query_str = "v=12.0&" + "&".join(params) 
     final_url = f"{WEBAPP_URL.rstrip('/')}/?{query_str}"
+
+    logger.info(f"Generated short URL for Group {message.chat.id}")
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📸 Открыть терминал учета", url=final_url)]
