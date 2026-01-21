@@ -274,7 +274,10 @@ async function submitData(action, targetId = null) {
 
         const response = await fetch(state.apiUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'Bypass-Tunnel-Reminder': 'true' // Disable localtunnel splash screen
+            },
             body: JSON.stringify(payload)
         });
 

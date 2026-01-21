@@ -268,7 +268,7 @@ async def handle_setup(message: Message, bot: Bot):
         final_params.append(f"w={webhook_endpoint}")
 
     
-    query_str = "v=4.0&" + "&".join(final_params)
+    query_str = "v=4.1&" + "&".join(final_params)
     final_url = f"{WEBAPP_URL}?{query_str}"
 
     # Use URL button for group compatibility (web_app not allowed in inline keyboards in groups)

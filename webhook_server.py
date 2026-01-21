@@ -35,7 +35,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "Bypass-Tunnel-Reminder"], # Allow custom header
 )
 
 # Mount static files for photos
