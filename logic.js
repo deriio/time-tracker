@@ -272,7 +272,11 @@ async function submitData(action, targetId = null) {
             target_user_id: targetId
         };
 
-        // REMOVED DEBUG ALERTS
+        // Visual feedback: sending state
+        const originalText = btn ? btn.textContent : "";
+        if (btn) {
+            btn.textContent = "⏳ Отправка...";
+        }
 
         const response = await fetch(state.apiUrl, {
             method: 'POST',
@@ -285,10 +289,28 @@ async function submitData(action, targetId = null) {
         });
 
         if (response.ok) {
-            tg.close();
+            // Success feedback
+            if (btn) btn.style.backgroundColor = "#28a745"; // Green
+
+            // Show big success message
+            document.body.innerHTML = `
+                <div style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;background-color:#000;color:white;">
+                    <h1 style="font-size:60px;">✅</h1>
+                    <h2 style="margin-top:20px;">Принято!</h2>
+                </div>
+            `;
+
+            // Close after delay
+            setTimeout(() => {
+                tg.close();
+            }, 1500);
+
         } else {
             alert("Ошибка сервера: " + response.status);
-            if (btn) btn.disabled = false;
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
         }
     } catch (e) {
         alert("Ошибка сети: " + e.message);
