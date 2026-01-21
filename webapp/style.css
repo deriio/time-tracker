@@ -1,15 +1,16 @@
 :root {
-    --bg: var(--tg-theme-bg-color, #ffffff);
-    --text: var(--tg-theme-text-color, #000000);
-    --hint: var(--tg-theme-hint-color, #999999);
+    --bg: var(--tg-theme-bg-color, #1a1a1a);
+    --text: var(--tg-theme-text-color, #ffffff);
+    --hint: var(--tg-theme-hint-color, #888888);
     --link: var(--tg-theme-link-color, #2481cc);
     --primary: var(--tg-theme-button-color, #3390ec);
     --primary-text: var(--tg-theme-button-text-color, #ffffff);
     
     --success: #31b545;
     --danger: #e53935;
-    --surface: var(--tg-theme-secondary-bg-color, #f4f4f7);
+    --surface: var(--tg-theme-secondary-bg-color, #2d2d2d);
 }
+
 
 * {
     box-sizing: border-box;

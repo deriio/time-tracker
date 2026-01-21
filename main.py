@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import asyncio
+import httpx
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F, BaseMiddleware
 from aiogram.filters import Command, CommandStart
@@ -29,6 +30,7 @@ GOOGLE_JSON_PATH = os.getenv("GOOGLE_JSON_PATH")
 DRIVE_FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
 TEMPLATE_FILE_ID = os.getenv("TEMPLATE_FILE_ID")
 WEBAPP_URL = os.getenv("WEBAPP_URL")
+WEBHOOK_SERVER_URL = os.getenv("WEBHOOK_SERVER_URL", "http://localhost:8000")
 
 # Admin IDs handling
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
@@ -225,11 +227,11 @@ async def handle_debug_users(message: Message):
     logger.info(f"--- END DUMP. Total: {len(users)}, Active: {active_count} ---")
     await message.reply(f"Dumped {len(users)} users. Active: {active_count}.")
 
-# Handler for /setup_checkin - Creates the PINNED message
 @dp.message(Command("setup_checkin"))
 async def handle_setup(message: Message, bot: Bot):
     if message.from_user.id not in ADMIN_IDS:
-        await message.reply("⛔ Admin access required.")
+        logger.warning(f"Admin access denied for User ID: {message.from_user.id} (@{message.from_user.username})")
+        await message.reply(f"⛔ Admin access required.\n(Your ID: {message.from_user.id})")
         return
 
     import json
@@ -260,12 +262,18 @@ async def handle_setup(message: Message, bot: Bot):
     # CRITICAL: Pass current Group ID
     final_params.append(f"g={message.chat.id}")
     
+    # Pass webhook server URL for photo upload
+    if WEBHOOK_SERVER_URL:
+        webhook_endpoint = WEBHOOK_SERVER_URL.rstrip('/') + "/api/checkin"
+        final_params.append(f"w={webhook_endpoint}")
+
+    
     query_str = "v=3.1&" + "&".join(final_params)
     final_url = f"{WEBAPP_URL}?{query_str}"
 
-    # Now we can use a direct WebApp button in the group!
+    # Use URL button for group compatibility (web_app not allowed in inline keyboards in groups)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📸 Открыть терминал учета", web_app=WebAppInfo(url=final_url))]
+        [InlineKeyboardButton(text="📸 Открыть терминал учета", url=final_url)]
     ])
     
     msg = await message.answer(
@@ -342,19 +350,16 @@ async def process_web_check(message: Message, data: dict, user_id: int):
     target_info = data.get("target_user_id") or user_id
     action = data["action"]
 
-    # 1. Handle Photo (Base64 or URL)
+    # 1. Handle Photo (only HTTP URL supported now)
     status_msg = await message.answer("⌛ Обработка...", reply_markup=ReplyKeyboardRemove()) # REMOVE KEYBOARD HERE
     
     photo_url = None
-    if image_data.startswith("http"):
+    if image_data and image_data.startswith("http"):
         photo_url = image_data
         logger.info(f"Using direct photo URL: {photo_url}")
     else:
-        logger.info("Uploading Base64 image to ImgBB...")
-        photo_url = await upload_to_imgbb(image_data, IMGBB_API_KEY)
-
-    if not photo_url:
-        await message.answer("❌ Failed to process photo.")
+        logger.error(f"Invalid photo data: expected HTTP URL, got: {type(image_data)}")
+        await message.answer("❌ Ошибка: фото должно быть загружено на сервер. Попробуйте еще раз.")
         return
 
     # 2. Get Employee Info
@@ -412,11 +417,26 @@ async def process_web_check(message: Message, data: dict, user_id: int):
     
     # Determine where to send the report
     target_chat = data.get("group_id") or message.chat.id
+    photo_filename = data.get("photo_filename")  # Get filename for deletion after sending
     
     try:
         await message.bot.send_photo(chat_id=target_chat, photo=photo_url, caption=caption, parse_mode="Markdown")
         if str(target_chat) != str(message.chat.id):
             await message.answer("✅ Отчет успешно отправлен в группу.")
+        
+        # Delete photo from webhook server after successful send
+        if photo_filename and WEBHOOK_SERVER_URL:
+            try:
+                async with httpx.AsyncClient() as client:
+                    delete_url = f"{WEBHOOK_SERVER_URL.rstrip('/')}/api/photos/{photo_filename}"
+                    delete_resp = await client.delete(delete_url, timeout=5.0)
+                    if delete_resp.status_code == 200:
+                        logger.info(f"Photo deleted from server: {photo_filename}")
+                    else:
+                        logger.warning(f"Failed to delete photo {photo_filename}: {delete_resp.status_code}")
+            except Exception as e_delete:
+                logger.error(f"Error deleting photo {photo_filename}: {e_delete}")
+                # Non-critical error, continue
     except Exception as e_photo:
         logger.error(f"Failed to send photo back: {e_photo}")
         # Fallback to text only

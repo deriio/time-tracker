@@ -14,7 +14,7 @@ const state = {
     targetUserId: null,
     groupId: null,
     employeeName: null,
-    apiUrl: "https://ninety-dots-begin.loca.lt/api/checkin"
+    apiUrl: null // Will be set from URL params (w parameter)
 };
 
 // Start
@@ -39,6 +39,7 @@ async function init() {
     const orphanData = params.get("orphans");
     const empData = params.get("employees");
     state.groupId = params.get("g");
+    state.apiUrl = params.get("w"); // Webhook server URL
 
     // Safe decoding: tries decodeURIComponent, fallback to B64
     function robustDecode(str) {
