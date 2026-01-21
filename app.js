@@ -12,7 +12,9 @@ const state = {
     orphanList: [],
     employeeList: [],
     targetUserId: null,
-    webhookUrl: null
+    groupId: null,
+    employeeName: null,
+    apiUrl: null // Will be set from URL params (w parameter)
 };
 
 // Start
@@ -22,11 +24,10 @@ async function init() {
 
     console.log("WebApp Init", state.user);
 
-    // Bypass check if debug mode is on OR just log warning
+    // Bypass check if debug mode is on
     if (!state.user.id && !isDebug) {
-        console.warn("User ID not detected in initData. Continuing anyway...");
-        // showError("Пожалуйста, откройте это приложение из Telegram.");
-        // return; 
+        showError("Пожалуйста, откройте это приложение из Telegram.");
+        return;
     }
 
     // Default mock user for debug
@@ -34,31 +35,30 @@ async function init() {
         state.user = { id: 7042383572, first_name: "Admin", username: "test_user" };
     }
 
-    // Optimized parameter handling
-    const orphanData = params.get("o") || params.get("orphans");
-    const empData = params.get("e") || params.get("employees");
-    state.webhookUrl = params.get("w") || params.get("webhook");
+    // Identify user role and get initial lists
+    const orphanData = params.get("orphans");
+    const empData = params.get("employees");
+    state.groupId = params.get("g");
+    state.apiUrl = params.get("w"); // Webhook server URL
 
-    // Safe decoding: tries B64 first (more common now), then decodeURIComponent
+    // Safe decoding: tries decodeURIComponent, fallback to B64
     function robustDecode(str) {
         if (!str) return null;
-
-        // Try Base64 first (new optimized way)
         try {
-            const b64 = str.replace(/-/g, '+').replace(/_/g, '/');
-            const bin = atob(b64);
-            const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
-            const decoded = new TextDecoder().decode(bytes);
-            if (decoded.startsWith('[') || decoded.startsWith('{')) return decoded;
-        } catch (e) { }
-
-        try {
-            // Try simple URL decode fallback
+            // Try simple URL decode first
             const decoded = decodeURIComponent(str);
             if (decoded.startsWith('[') || decoded.startsWith('{')) return decoded;
         } catch (e) { }
 
-        return null;
+        try {
+            const b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+            const bin = atob(b64);
+            const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+            return new TextDecoder().decode(bytes);
+        } catch (e) {
+            console.error("Decode error", e);
+            return null;
+        }
     }
 
     if (orphanData) {
@@ -90,7 +90,8 @@ async function init() {
     }
 
     // Role detection logic
-    const isSupervisor = params.get("s") === "1" || params.get("is_super") === "1";
+    // Now state.employeeList contains strings (names), not objects.
+    const isSupervisor = params.get("is_super") === "1";
 
     // Attempt to find current user's name if they are an employee
     // (Note: This is hard without ID mapping in URL, but we can assume if they aren't super/orphan, they check for themselves)
@@ -99,12 +100,15 @@ async function init() {
     if (isSupervisor) {
         state.role = "supervisor";
     } else if (state.employeeList.length > 0) {
-        // Simple heuristic: if we have employees and not a supervisor, we are an employee
-        // We'll use the TG first_name or placeholder
         state.role = "employee";
         state.employeeName = state.user.first_name || "Сотрудник";
     } else {
         state.role = "orphan";
+    }
+
+    // Attempt name detection if employee
+    if (state.role === "employee" && state.user.id) {
+        // Logic to find name from list can be added, but for now we use first_name
     }
 
     renderScreen();
@@ -175,15 +179,12 @@ function initEmployeeScreen() {
         document.getElementById("btn-check-out").disabled = false;
     });
 
-    const btnInEmp = document.getElementById("btn-check-in");
-    const btnOutEmp = document.getElementById("btn-check-out");
-
     document.getElementById("btn-check-in").addEventListener("click", () => {
-        submitData("check_in", null, btnInEmp);
+        submitData("check_in");
     });
 
     document.getElementById("btn-check-out").addEventListener("click", () => {
-        submitData("check_out", null, btnOutEmp);
+        submitData("check_out");
     });
 }
 
@@ -218,8 +219,8 @@ function initSupervisorScreen() {
         btnOut.disabled = !ok;
     }
 
-    btnIn.addEventListener("click", () => submitData("check_in", state.targetUserId, btnIn));
-    btnOut.addEventListener("click", () => submitData("check_out", state.targetUserId, btnOut));
+    btnIn.addEventListener("click", () => submitData("check_in", state.targetUserId));
+    btnOut.addEventListener("click", () => submitData("check_out", state.targetUserId));
 }
 
 // CAMERA HELPER
@@ -253,96 +254,53 @@ function setupCamera(inputId, imgId, placeholderId, btnId, retakeId, onCapture) 
 }
 
 // COMMUNICATION
-async function submitData(action, targetId = null, btn = null) {
-    if (!state.photoBase64) {
-        alert("Пожалуйста, сначала сделайте фото.");
-        return;
-    }
+async function submitData(action, targetId = null) {
+    if (!state.photoBase64) return;
 
-    let originalText = "";
-    if (btn) {
-        originalText = btn.textContent;
-        btn.textContent = "⌛ Загрузка...";
-        btn.disabled = true;
-    }
+    const btn = document.activeElement;
+    if (btn) btn.disabled = true;
 
+    // We can't use tg.sendData because it fails in groups.
+    // Instead, we call our own API.
     try {
-        let payloadImage = null;
-
-        // Upload to webhook server
-        if (!state.webhookUrl) {
-            throw new Error("Отсутствует URL webhook сервера для загрузки фото.");
-        }
-
-        console.log("Uploading to webhook server...");
-        const uploadedUrl = await uploadToWebhook(state.photoBase64, state.webhookUrl);
-
-        if (uploadedUrl) {
-            payloadImage = uploadedUrl.url;
-            state.lastPhotoFilename = uploadedUrl.filename; // Store filename for later deletion
-            console.log("Upload Success:", payloadImage);
-        } else {
-            throw new Error("Не удалось загрузить фотографию на сервер. Проверьте интернет или настройки.");
-        }
-
-        if (btn) btn.textContent = "⌛ Отправка...";
-
-        sendData({
+        const payload = {
             action: action,
-            image: payloadImage,
-            target_user_id: targetId || state.user.id || null,
-            photo_filename: state.lastPhotoFilename // Include filename for deletion after sending
-        });
-    } catch (e) {
-        console.error("Submit error", e);
-        alert("Ошибка: " + e.message);
-        if (btn) {
-            btn.textContent = originalText;
-            btn.disabled = false;
-        }
-    }
-}
+            photo: state.photoBase64,
+            user_id: state.user.id,
+            group_id: state.groupId,
+            employee_name: targetId || state.employeeName || state.user.first_name,
+            target_user_id: targetId
+        };
 
-async function uploadToWebhook(base64, webhookUrl) {
-    try {
-        // Remove data URL prefix if present
-        let cleanBase64 = base64;
-        if (base64.includes(",")) {
-            cleanBase64 = base64.split(",")[1];
-        }
+        // DEBUG: Confirm URL before sending
+        alert("Sending to: " + state.apiUrl);
 
-        const response = await fetch(`${webhookUrl.replace(/\/$/, "")}/api/upload`, {
-            method: "POST",
+        const response = await fetch(state.apiUrl, {
+            method: 'POST',
             headers: {
-                "Content-Type": "application/json"
+                'Content-Type': 'application/json',
+                'Bypass-Tunnel-Reminder': 'true' // Disable localtunnel splash screen
             },
-            body: JSON.stringify({
-                image: cleanBase64
-            })
+            body: JSON.stringify(payload)
         });
 
         if (response.ok) {
-            const data = await response.json();
-            if (data.ok && data.url) {
-                return { url: data.url, filename: data.filename };
-            }
+            tg.close();
         } else {
-            const errorData = await response.json().catch(() => ({}));
-            console.error("Webhook upload failed:", errorData);
+            alert("Ошибка сервера: " + response.status);
+            if (btn) btn.disabled = false;
         }
     } catch (e) {
-        console.error("Webhook upload error", e);
+        alert("Ошибка сети: " + e.message);
+        if (btn) btn.disabled = false;
     }
-    return null;
 }
 
 function sendData(data) {
-    console.log("Sending data to Telegram:", data);
+    // Legacy support for claim
     if (tg && tg.sendData) {
         tg.sendData(JSON.stringify(data));
         tg.close();
-    } else {
-        alert("Данные отправлены (Debug): " + data.action);
     }
 }
 
