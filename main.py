@@ -255,16 +255,17 @@ async def handle_setup(message: Message, bot: Bot):
     
     logger.info(f"Generating URL for {user_id}. Super: {is_super}. Admins: {ADMIN_IDS}")
 
-    if is_super:
-        active_names = [u["name"] for u in users_v2 if u["status"].strip().lower() == "active"]
-        # logic.js expects 'employees', not 'e'
-        final_params.append(f"employees={b64_safe(active_names)}")
-        # logic.js expects 'is_super', not 's'
-        final_params.append("is_super=1")
-    else:
-        orphan_names = sheet_manager.get_orphan_users()
-        # logic.js expects 'orphans', not 'o'
-        final_params.append(f"orphans={b64_safe(orphan_names)}")
+    # NEW: Send all active users with roles to the WebApp for ID-based logic
+    active_users_compact = []
+    for u in users_v2:
+        if u["status"].strip().lower() == "active" and u["tg_id"]:
+            role_char = "s" if u["role"].lower().strip() == "supervisor" else "e"
+            active_users_compact.append([str(u["tg_id"]), u["name"], role_char])
+    
+    final_params.append(f"users={b64_safe(active_users_compact)}")
+    
+    orphan_names = sheet_manager.get_orphan_users()
+    final_params.append(f"orphans={b64_safe(orphan_names)}")
     
     # CRITICAL: Pass current Group ID
     final_params.append(f"g={message.chat.id}")
@@ -275,7 +276,7 @@ async def handle_setup(message: Message, bot: Bot):
         final_params.append(f"w={webhook_endpoint}")
 
     
-    query_str = "v=5.0&" + "&".join(final_params)
+    query_str = "v=6.0&" + "&".join(final_params)
     
     # Use loader.html to bypass cache
     base_url = WEBAPP_URL.rstrip('/') + "/loader.html"

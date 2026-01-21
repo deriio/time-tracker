@@ -457,8 +457,8 @@ class GoogleSheetManager:
             date_str = now.strftime("%d.%m.%Y")
             time_str = now.strftime("%H:%M")
             
-            # Row Format: Date, Time, Employee Name, Type, Photo URL, Submitted By, Tg_ID
-            row = [date_str, time_str, user_name, log_type, photo_url, submitted_by, str(telegram_id)]
+            # Row Format: Date, Time, Employee Name, Type, Submitted By
+            row = [date_str, time_str, user_name, log_type, submitted_by]
             
             # Update specific range A{next_row}
             range_name = f"A{next_row}"

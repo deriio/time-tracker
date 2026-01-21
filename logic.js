@@ -29,7 +29,7 @@ async function init() {
 
     // Identify user role and get initial lists
     const orphanData = params.get("orphans");
-    const empData = params.get("employees");
+    const userData = params.get("users");
     state.groupId = params.get("g");
     state.apiUrl = params.get("w"); // Webhook server URL
 
@@ -57,43 +57,81 @@ async function init() {
         const decoded = robustDecode(orphanData);
         if (decoded) {
             try { state.orphanList = JSON.parse(decoded); } catch (e) { console.error("JSON error orphans", e); }
-        } else {
-            showError("Ошибка декодирования orphans");
         }
     }
-    if (empData) {
-        const decoded = robustDecode(empData);
+
+    if (userData) {
+        const decoded = robustDecode(userData);
         if (decoded) {
             try {
-                state.employeeList = JSON.parse(decoded);
-                console.log("Employees loaded:", state.employeeList.length);
+                const users = JSON.parse(decoded); // [[id, name, role], ...]
+                const myId = String(state.user.id);
+
+                // 1. Identify me in the list
+                const me = users.find(u => String(u[0]) === myId);
+
+                if (me) {
+                    state.employeeName = me[1];
+                    state.role = (me[2] === 's') ? 'supervisor' : 'employee';
+                    // For supervisor, we need the list of ALL active names
+                    state.employeeList = users.map(u => u[1]);
+                    console.log(`Identified as: ${state.employeeName} (${state.role})`);
+                } else {
+                    // Not found in registered users -> must be orphan or unauthorized
+                    state.role = "orphan";
+                }
             } catch (e) {
-                console.error("JSON error employees", e);
-                showError("Ошибка JSON employees: " + e.message);
+                console.error("JSON error users", e);
             }
-        } else {
-            showError("Ошибка декодирования employees");
         }
     }
 
-    // DEBUG: Show count
-    if (params.get("debug_info") === "1") {
-        alert(`Loaded: ${state.employeeList.length} employees, ${state.orphanList.length} orphans`);
-    }
-
-    // Role detection logic
-    const isSupervisor = params.get("is_super") === "1";
-
-    if (isSupervisor) {
-        state.role = "supervisor";
-    } else if (state.employeeList.length > 0) {
-        state.role = "employee";
-        state.employeeName = state.user.first_name || "Сотрудник";
-    } else {
-        state.role = "orphan";
+    // Fallback if no user data but orphans exist
+    if (!state.role) {
+        state.role = (state.orphanList.length > 0) ? "orphan" : "orphan";
     }
 
     renderScreen();
+}
+
+async function sendData(data) {
+    // NEW: Use fetch to webhook server for claim action
+    // because tg.sendData doesn't work in group inline buttons
+    try {
+        const btn = document.activeElement;
+        if (btn) btn.disabled = true;
+
+        const payload = {
+            ...data,
+            user_id: state.user.id,
+            group_id: state.groupId,
+            username: state.user.username || "Unknown"
+        };
+
+        const claimApiUrl = state.apiUrl.replace("/api/checkin", "/api/claim");
+
+        const response = await fetch(claimApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+            document.body.innerHTML = `
+                <div style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;background-color:#000;color:white;text-align:center;padding:20px;">
+                     <div style="font-size:80px;">✅</div>
+                     <h2 style="margin-top:20px;">Готово!</h2>
+                     <p>Ваш аккаунт привязан. Теперь вы можете пользоваться терминалом.</p>
+                </div>
+            `;
+            setTimeout(() => tg.close(), 3000);
+        } else {
+            alert("Ошибка привязки. Обратитесь к админу.");
+            if (btn) btn.disabled = false;
+        }
+    } catch (e) {
+        alert("Ошибка сети: " + e.message);
+    }
 }
 
 function renderScreen() {
@@ -310,13 +348,7 @@ async function submitData(action, targetId = null) {
     }
 }
 
-function sendData(data) {
-    // Legacy support for claim
-    if (tg && tg.sendData) {
-        tg.sendData(JSON.stringify(data));
-        tg.close();
-    }
-}
+
 
 function showError(msg) {
     const app = document.getElementById("app");

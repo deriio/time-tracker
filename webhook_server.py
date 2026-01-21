@@ -35,7 +35,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
-    allow_headers=["*", "Bypass-Tunnel-Reminder"], # Allow custom header
+    allow_headers=["*"],
 )
 
 # Mount static files for photos
@@ -127,23 +127,41 @@ async def handle_checkin(request: Request):
         # 1. Decode Image
         photo_bytes = base64.b64decode(photo_b64)
 
-        # 2. Log to Google Sheets (without photo URL as requested)
+        # 2. Log to Google Sheets
+        submitted_by = ""
+        if target_info:
+            # This is a supervisor action. user_id is the supervisor.
+            # We try to find the supervisor's name by their ID.
+            try:
+                all_users = sheet_manager.get_users_v2()
+                supervisor = next((u for u in all_users if str(u['tg_id']) == str(user_id)), None)
+                if supervisor:
+                    submitted_by = supervisor['name']
+                else:
+                    submitted_by = f"ID: {user_id}"
+            except Exception as e_sup:
+                logger.error(f"Failed to find supervisor name: {e_sup}")
+                submitted_by = f"ID: {user_id}"
+
         try:
             log_type = "Приход" if action == "check_in" else "Уход"
             sheet_manager.append_log(
                 user_name=employee_name,
                 telegram_id=user_id,
                 log_type=log_type,
-                photo_url="-" # No storage requested
+                photo_url="-", # No storage requested
+                submitted_by=submitted_by
             )
         except Exception as e_sheet:
             logger.error(f"Sheet log failed: {e_sheet}")
 
         # 3. Send to Telegram directly
         # We use standard Bot API via httpx
+        from datetime import datetime
+        now_time = datetime.now().strftime("%H:%M")
         status_emoji = "🟢" if action == "check_in" else "🔴"
         status_text = "НАЧАЛ РАБОТУ" if action == "check_in" else "ЗАКОНЧИЛ РАБОТУ"
-        caption = f"{status_emoji} **{employee_name}** {status_text}"
+        caption = f"{status_emoji} **{employee_name}** {status_text} в {now_time}"
 
         async with httpx.AsyncClient() as client:
             files = {'photo': ('photo.jpg', photo_bytes, 'image/jpeg')}
@@ -167,6 +185,51 @@ async def handle_checkin(request: Request):
 
     except Exception as e:
         logger.error(f"Server Error: {e}")
+        return {"ok": False, "error": str(e)}
+
+@app.post("/api/claim")
+async def handle_claim(request: Request):
+    """
+    Handles account binding (claiming an orphan identity).
+    """
+    try:
+        data = await request.json()
+        user_id = data.get("user_id")
+        full_name = data.get("full_name")
+        group_id = data.get("group_id")
+        username = data.get("username", "Unknown")
+
+        if not user_id or not full_name:
+            return {"ok": False, "error": "Missing user_id or full_name"}
+
+        logger.info(f"Claim request: {user_id} (@{username}) -> {full_name}")
+
+        if sheet_manager.bind_telegram_id(user_id, full_name):
+            # Send notification to Telegram
+            user_display = f"@{username}" if username != "Unknown" else f"ID:{user_id}"
+            caption = (f"✅ **Аккаунт привязан**\n\n"
+                      f"Сотрудник: **{full_name}**\n"
+                      f"Аккаунт: {user_display}\n\n"
+                      f"Теперь вы имеете доступ к терминалу.")
+            
+            async with httpx.AsyncClient() as client:
+                payload = {
+                    'chat_id': group_id or user_id,
+                    'text': caption,
+                    'parse_mode': 'Markdown'
+                }
+                await client.post(
+                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                    data=payload,
+                    timeout=10.0
+                )
+            
+            return {"ok": True}
+        else:
+            return {"ok": False, "error": "Failed to bind ID in sheet"}
+
+    except Exception as e:
+        logger.error(f"Claim error: {e}")
         return {"ok": False, "error": str(e)}
 
 if __name__ == "__main__":
