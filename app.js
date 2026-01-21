@@ -12,7 +12,7 @@ const state = {
     orphanList: [],
     employeeList: [],
     targetUserId: null,
-    imgbbKey: null
+    webhookUrl: null
 };
 
 // Start
@@ -37,7 +37,7 @@ async function init() {
     // Optimized parameter handling
     const orphanData = params.get("o") || params.get("orphans");
     const empData = params.get("e") || params.get("employees");
-    state.imgbbKey = params.get("b") || params.get("imgbb");
+    state.webhookUrl = params.get("w") || params.get("webhook");
 
     // Safe decoding: tries B64 first (more common now), then decodeURIComponent
     function robustDecode(str) {
@@ -269,19 +269,20 @@ async function submitData(action, targetId = null, btn = null) {
     try {
         let payloadImage = null;
 
-        // Force upload to ImgBB
-        if (!state.imgbbKey) {
-            throw new Error("Отсутствует ключ API для загрузки фото.");
+        // Upload to webhook server
+        if (!state.webhookUrl) {
+            throw new Error("Отсутствует URL webhook сервера для загрузки фото.");
         }
 
-        console.log("Uploading to ImgBB...");
-        const uploadedUrl = await uploadToImgBB(state.photoBase64, state.imgbbKey);
+        console.log("Uploading to webhook server...");
+        const uploadedUrl = await uploadToWebhook(state.photoBase64, state.webhookUrl);
 
         if (uploadedUrl) {
-            payloadImage = uploadedUrl;
+            payloadImage = uploadedUrl.url;
+            state.lastPhotoFilename = uploadedUrl.filename; // Store filename for later deletion
             console.log("Upload Success:", payloadImage);
         } else {
-            throw new Error("Не удалось загрузить фотографию на сервер (ImgBB). Проверьте интернет или настройки.");
+            throw new Error("Не удалось загрузить фотографию на сервер. Проверьте интернет или настройки.");
         }
 
         if (btn) btn.textContent = "⌛ Отправка...";
@@ -289,7 +290,8 @@ async function submitData(action, targetId = null, btn = null) {
         sendData({
             action: action,
             image: payloadImage,
-            target_user_id: targetId || state.user.id || null
+            target_user_id: targetId || state.user.id || null,
+            photo_filename: state.lastPhotoFilename // Include filename for deletion after sending
         });
     } catch (e) {
         console.error("Submit error", e);
@@ -301,23 +303,35 @@ async function submitData(action, targetId = null, btn = null) {
     }
 }
 
-async function uploadToImgBB(base64, key) {
+async function uploadToWebhook(base64, webhookUrl) {
     try {
-        const formData = new FormData();
-        formData.append("key", key);
-        formData.append("image", base64);
+        // Remove data URL prefix if present
+        let cleanBase64 = base64;
+        if (base64.includes(",")) {
+            cleanBase64 = base64.split(",")[1];
+        }
 
-        const response = await fetch("https://api.imgbb.com/1/upload", {
+        const response = await fetch(`${webhookUrl.replace(/\/$/, "")}/api/upload`, {
             method: "POST",
-            body: formData
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                image: cleanBase64
+            })
         });
 
         if (response.ok) {
             const data = await response.json();
-            return data.data.url;
+            if (data.ok && data.url) {
+                return { url: data.url, filename: data.filename };
+            }
+        } else {
+            const errorData = await response.json().catch(() => ({}));
+            console.error("Webhook upload failed:", errorData);
         }
     } catch (e) {
-        console.error("ImgBB upload failed", e);
+        console.error("Webhook upload error", e);
     }
     return null;
 }

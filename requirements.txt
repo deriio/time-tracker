@@ -4,3 +4,6 @@ google-api-python-client>=2.0.0
 google-auth>=2.0.0
 python-dotenv>=1.0.0
 pytz
+fastapi>=0.100.0
+uvicorn>=0.23.0
+httpx>=0.24.0

@@ -3,8 +3,12 @@ import json
 import base64
 import logging
 import httpx
-from fastapi import FastAPI, Request
+import uuid
+from pathlib import Path
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 from sheets_manager import GoogleSheetManager
 
@@ -14,10 +18,15 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 GOOGLE_JSON_PATH = os.getenv("GOOGLE_JSON_PATH")
 DRIVE_FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
 TEMPLATE_FILE_ID = os.getenv("TEMPLATE_FILE_ID")
+WEBHOOK_SERVER_URL = os.getenv("WEBHOOK_SERVER_URL", "http://localhost:8000")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("webhook_server")
+
+# Create photos directory if it doesn't exist
+PHOTOS_DIR = Path("photos")
+PHOTOS_DIR.mkdir(exist_ok=True)
 
 app = FastAPI()
 
@@ -29,12 +38,75 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount static files for photos
+app.mount("/photos", StaticFiles(directory=str(PHOTOS_DIR)), name="photos")
+
 # Initialize Sheets
 sheet_manager = GoogleSheetManager(
     json_path=GOOGLE_JSON_PATH,
     drive_folder_id=DRIVE_FOLDER_ID,
     template_file_id=TEMPLATE_FILE_ID
 )
+
+@app.post("/api/upload")
+async def upload_photo(request: Request):
+    """
+    Загружает фото в Base64, сохраняет временно на сервере,
+    возвращает публичный URL для доступа к фото.
+    """
+    try:
+        data = await request.json()
+        photo_b64 = data.get("image") or data.get("photo")
+        
+        if not photo_b64:
+            raise HTTPException(status_code=400, detail="No photo data provided")
+        
+        # Remove data URL prefix if present (data:image/jpeg;base64,...)
+        if photo_b64.startswith("data:image"):
+            photo_b64 = photo_b64.split(",", 1)[1]
+        
+        # Generate unique filename
+        filename = f"{uuid.uuid4().hex}.jpg"
+        filepath = PHOTOS_DIR / filename
+        
+        # Decode and save photo
+        try:
+            photo_bytes = base64.b64decode(photo_b64)
+            filepath.write_bytes(photo_bytes)
+            logger.info(f"Photo saved: {filename} ({len(photo_bytes)} bytes)")
+        except Exception as e:
+            logger.error(f"Failed to decode/save photo: {e}")
+            raise HTTPException(status_code=400, detail="Invalid base64 image data")
+        
+        # Return public URL
+        photo_url = f"{WEBHOOK_SERVER_URL.rstrip('/')}/photos/{filename}"
+        return {"ok": True, "url": photo_url, "filename": filename}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Upload error: {e}")
+        return {"ok": False, "error": str(e)}
+
+@app.delete("/api/photos/{filename}")
+async def delete_photo(filename: str):
+    """
+    Удаляет фото с сервера после успешной отправки в Telegram.
+    """
+    try:
+        filepath = PHOTOS_DIR / filename
+        
+        if not filepath.exists():
+            logger.warning(f"Photo not found for deletion: {filename}")
+            return {"ok": False, "error": "Photo not found"}
+        
+        filepath.unlink()
+        logger.info(f"Photo deleted: {filename}")
+        return {"ok": True, "message": "Photo deleted successfully"}
+        
+    except Exception as e:
+        logger.error(f"Delete error: {e}")
+        return {"ok": False, "error": str(e)}
 
 @app.post("/api/checkin")
 async def handle_checkin(request: Request):
