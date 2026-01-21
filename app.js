@@ -24,26 +24,12 @@ async function init() {
 
     console.log("WebApp Init", state.user);
 
-    // STARTUP DEBUG
-    // alert("App Init! User: " + (state.user.id || "None"));
-
-    // Bypass check if debug mode is on
-    // TEMPORARY: Allow empty user (some Telegram clients lag with initData)
-    if (!state.user.id && !isDebug) {
-        // Mock user if missing (FOR TESTING)
-        state.user = { id: 999999, first_name: "TestUser", username: "test" };
-        // showError("Пожалуйста, откройте это приложение из Telegram.");
-        // return;
-    }
-
-    // Default mock user for debug
-    if (!state.user.id && isDebug) {
-        state.user = { id: 7042383572, first_name: "Admin", username: "test_user" };
-    }
+    // Mock user REMOVED to prevent 999999 ID issue.
+    // If no user, state.user.id will be undefined.
 
     // Identify user role and get initial lists
     const orphanData = params.get("orphans");
-    const empData = params.get("employees");
+    const userData = params.get("users");
     state.groupId = params.get("g");
     state.apiUrl = params.get("w"); // Webhook server URL
 
@@ -71,53 +57,114 @@ async function init() {
         const decoded = robustDecode(orphanData);
         if (decoded) {
             try { state.orphanList = JSON.parse(decoded); } catch (e) { console.error("JSON error orphans", e); }
-        } else {
-            showError("Ошибка декодирования orphans");
         }
     }
-    if (empData) {
-        const decoded = robustDecode(empData);
+
+    if (userData) {
+        const decoded = robustDecode(userData);
         if (decoded) {
             try {
-                state.employeeList = JSON.parse(decoded);
-                console.log("Employees loaded:", state.employeeList.length);
+                const users = JSON.parse(decoded); // [[id, name, role], ...]
+                const myId = String(state.user.id);
+
+                // 1. Identify me in the list
+                const me = users.find(u => String(u[0]) === myId);
+
+                if (me) {
+                    state.employeeName = me[1];
+                    state.role = (me[2] === 's') ? 'supervisor' : 'employee';
+                    // For supervisor, we need the list of ALL active names
+                    state.employeeList = users.map(u => u[1]);
+                    console.log(`Identified as: ${state.employeeName} (${state.role})`);
+                } else {
+                    // Not found in registered users -> must be orphan or unauthorized
+                    state.role = "orphan";
+                }
             } catch (e) {
-                console.error("JSON error employees", e);
-                showError("Ошибка JSON employees: " + e.message);
+                console.error("JSON error users", e);
             }
-        } else {
-            showError("Ошибка декодирования employees");
         }
     }
 
-    // DEBUG: Show count
-    if (params.get("debug_info") === "1") {
-        alert(`Loaded: ${state.employeeList.length} employees, ${state.orphanList.length} orphans`);
+    // Fallback logic
+    if (!state.role) {
+        if (state.orphanList.length > 0) {
+            state.role = "orphan";
+        } else {
+            state.role = "unauthorized"; // Show error if no roles found
+        }
     }
 
-    // Role detection logic
-    // Now state.employeeList contains strings (names), not objects.
-    const isSupervisor = params.get("is_super") === "1";
-
-    // Attempt to find current user's name if they are an employee
-    // (Note: This is hard without ID mapping in URL, but we can assume if they aren't super/orphan, they check for themselves)
-    // Actually, we'll use first_name as fallback if they aren't in any list.
-
-    if (isSupervisor) {
-        state.role = "supervisor";
-    } else if (state.employeeList.length > 0) {
-        state.role = "employee";
-        state.employeeName = state.user.first_name || "Сотрудник";
-    } else {
-        state.role = "orphan";
-    }
-
-    // Attempt name detection if employee
-    if (state.role === "employee" && state.user.id) {
-        // Logic to find name from list can be added, but for now we use first_name
-    }
-
+    console.log("Final State:", { role: state.role, name: state.employeeName, orphans: state.orphanList.length });
     renderScreen();
+}
+
+function initUnauthorizedScreen() {
+    const app = document.getElementById("app");
+    if (app) {
+        app.innerHTML = `
+            <div class="screen">
+                <h2>⛔ Доступ ограничен</h2>
+                <p style="text-align:center">Ваш аккаунт не найден в системе и нет доступных имен для регистрации.</p>
+                <p style="text-align:center;font-size:0.8em;color:#888;">ID: ${state.user.id || 'Неизвестен'}</p>
+                <button class="btn link" onclick="location.reload()">🔄 Обновить</button>
+            </div>
+        `;
+    }
+}
+
+async function sendData(data) {
+    // NEW: Use fetch to webhook server for claim action
+    // because tg.sendData doesn't work in group inline buttons
+    try {
+        const btn = document.activeElement;
+        if (btn) btn.disabled = true;
+
+        const payload = {
+            ...data,
+            user_id: state.user.id,
+            group_id: state.groupId,
+            username: state.user.username || "Unknown"
+        };
+
+        const claimApiUrl = state.apiUrl.replace("/api/checkin", "/api/claim");
+
+        const response = await fetch(claimApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+
+            // 1. Update State
+            state.employeeName = result.name;
+            state.role = (result.role === 'supervisor') ? 'supervisor' : 'employee';
+
+            // 2. Visual Feedback (Overlay)
+            const overlay = document.createElement("div");
+            overlay.style = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);display:flex;flex-direction:column;justify-content:center;align-items:center;z-index:9999;color:white;text-align:center;padding:20px;";
+            overlay.innerHTML = `
+                <div style="font-size:80px;">✅</div>
+                <h2 style="margin-top:20px;">Готово!</h2>
+                <p>Ваш аккаунт привязан.<br>Открываем терминал...</p>
+            `;
+            document.body.appendChild(overlay);
+
+            // 3. Transition after short delay
+            setTimeout(() => {
+                overlay.remove();
+                renderScreen();
+            }, 2000);
+
+        } else {
+            alert("Ошибка привязки. Обратитесь к админу.");
+            if (btn) btn.disabled = false;
+        }
+    } catch (e) {
+        alert("Ошибка сети: " + e.message);
+    }
 }
 
 function renderScreen() {
@@ -135,20 +182,8 @@ function renderScreen() {
 
     if (state.role === "orphan") initOrphanScreen();
     if (state.role === "employee") initEmployeeScreen();
-    if (state.role === "supervisor") {
-        initSupervisorScreen();
-        // Inline Debug if empty
-        if (state.employeeList.length === 0) {
-            const select = document.getElementById("target-select");
-            const debugP = document.createElement("p");
-            debugP.style.color = "orange";
-            debugP.style.fontSize = "10px";
-            debugP.style.marginTop = "5px";
-            const rawLen = (empData || "").length;
-            debugP.textContent = `Внимание: Список пуст. Параметр: ${rawLen} байт.`;
-            select.parentNode.appendChild(debugP);
-        }
-    }
+    if (state.role === "supervisor") initSupervisorScreen();
+    if (state.role === "unauthorized") initUnauthorizedScreen();
 }
 
 // ORPHAN SCREEN
@@ -211,7 +246,7 @@ function initSupervisorScreen() {
     });
 
     select.addEventListener("change", () => {
-        state.targetUserId = select.value;
+        state.targetUserId = select.value; // Here we use Name as ID because we don't have map
         validateSupervisor();
     });
 
@@ -264,51 +299,77 @@ async function submitData(action, targetId = null) {
     if (!state.photoBase64) return;
 
     const btn = document.activeElement;
-    if (btn) btn.disabled = true;
+    let originalText = "";
+    let originalColor = "";
 
-    // We can't use tg.sendData because it fails in groups.
-    // Instead, we call our own API.
+    // 1. Visual feedback on BUTTON ONLY
+    if (btn) {
+        originalText = btn.textContent;
+        originalColor = btn.style.backgroundColor;
+
+        btn.disabled = true;
+        btn.textContent = "⏳";
+        btn.style.backgroundColor = "#555"; // Grey deactived
+    }
+
     try {
         const payload = {
             action: action,
             photo: state.photoBase64,
-            user_id: state.user.id,
+            user_id: state.user.id, // Will be undefined if NO initData
             group_id: state.groupId,
             employee_name: targetId || state.employeeName || state.user.first_name,
             target_user_id: targetId
         };
 
-        // DEBUG: Confirm URL before sending
-        alert("Sending to: " + state.apiUrl);
-
         const response = await fetch(state.apiUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Bypass-Tunnel-Reminder': 'true' // Disable localtunnel splash screen
+                'Bypass-Tunnel-Reminder': 'true',
+                'ngrok-skip-browser-warning': 'true'
             },
             body: JSON.stringify(payload)
         });
 
         if (response.ok) {
-            tg.close();
+            // 2. Success Feedback (Only NOW replace screen)
+            document.body.innerHTML = `
+                <div style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;background-color:#000;color:white;">
+                     <div style="font-size:80px;">✅</div>
+                     <h2 style="margin-top:20px;">Готово!</h2>
+                </div>
+            `;
+
+            // 3. Close Logic
+            setTimeout(() => {
+                if (window.Telegram && window.Telegram.WebApp) {
+                    window.Telegram.WebApp.close();
+                } else {
+                    window.close();
+                }
+            }, 1000);
+
         } else {
+            // Error: Restore button
             alert("Ошибка сервера: " + response.status);
-            if (btn) btn.disabled = false;
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = originalText;
+                btn.style.backgroundColor = originalColor;
+            }
         }
     } catch (e) {
         alert("Ошибка сети: " + e.message);
-        if (btn) btn.disabled = false;
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = originalText;
+            btn.style.backgroundColor = originalColor;
+        }
     }
 }
 
-function sendData(data) {
-    // Legacy support for claim
-    if (tg && tg.sendData) {
-        tg.sendData(JSON.stringify(data));
-        tg.close();
-    }
-}
+
 
 function showError(msg) {
     const app = document.getElementById("app");

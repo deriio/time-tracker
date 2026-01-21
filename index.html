@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Учёт Времени v2.0</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="theme.css?v=1.0">
 </head>
 
 <body>
@@ -90,9 +90,19 @@
         </div>
     </template>
 
-    <!-- Scripts -->
-    <!-- Scripts -->
-    <script src="app.js?v=2.2"></script>
+    <!-- Dynamic Script Loading -->
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const ver = urlParams.get('v') || '1.0';
+        console.log("Loading app.js version:", ver);
+
+        const script = document.createElement('script');
+        script.src = `app.js?v=${ver}`;
+        script.onerror = () => {
+            document.getElementById('app').innerHTML = '<div class="screen"><h2>❌</h2><p>Ошибка загрузки логики. Проверьте интернет.</p></div>';
+        };
+        document.body.appendChild(script);
+    </script>
 </body>
 
 </html>
