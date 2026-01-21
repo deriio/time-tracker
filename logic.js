@@ -28,7 +28,7 @@ async function init() {
     // alert("App Init! User: " + (state.user.id || "None"));
 
     // STARTUP DEBUG
-    alert("Running logic.js v1.0");
+    // STARTUP DEBUG REMOVED
 
     // Mock user for safety
     if (!state.user.id) {
@@ -272,14 +272,13 @@ async function submitData(action, targetId = null) {
             target_user_id: targetId
         };
 
-        // DEBUG: Confirm URL before sending
-        alert("Sending to: " + state.apiUrl);
+        // REMOVED DEBUG ALERTS
 
         const response = await fetch(state.apiUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Bypass-Tunnel-Reminder': 'true' // Disable localtunnel splash screen
+                'Bypass-Tunnel-Reminder': 'true'
             },
             body: JSON.stringify(payload)
         });
