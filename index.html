@@ -6,15 +6,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Учёт Времени v2.0</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="theme.css?v=1.0">
+    <link rel="stylesheet" href="theme.css?v=2.0">
 </head>
 
 <body>
     <div id="app">
-        <!-- Loader -->
-        <div id="loading">
+        <!-- Loader: Premium Style -->
+        <div id="loading"
+            style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:80vh;color:var(--text-dim);">
             <div class="spinner"></div>
-            <p>Загрузка системы...</p>
+            <p style="margin-top:20px;letter-spacing:1px;font-weight:600;text-transform:uppercase;font-size:12px;">
+                Загрузка системы...</p>
         </div>
     </div>
 
@@ -26,7 +28,7 @@
             <h2>🔎 Идентификация</h2>
             <p class="subtitle">Ваш аккаунт не привязан. Выберите ваше имя из списка ниже:</p>
             <div class="form-group">
-                <label for="orphan-select">Сотрудник:</label>
+                <label>Сотрудник:</label>
                 <select id="orphan-select">
                     <option value="">-- Выберите из списка --</option>
                 </select>
@@ -44,8 +46,8 @@
             <div class="camera-section">
                 <div class="preview-box">
                     <img id="photo-preview" alt="Превью">
-                    <div id="camera-placeholder">
-                        <span class="icon">📷</span>
+                    <div id="camera-placeholder" class="camera-placeholder">
+                        <span class="placeholder-icon">📸</span>
                         <p>Нажмите кнопку ниже,<br>чтобы сделать фото</p>
                     </div>
                 </div>
@@ -61,12 +63,12 @@
         </div>
     </template>
 
-    <!-- SUPERVISOR FLOW (Proxy) -->
+    <!-- SUPERVISOR FLOW -->
     <template id="template-supervisor">
         <div class="screen supervisor-screen">
             <h2>👷 Режим Бригадира</h2>
             <div class="form-group">
-                <label for="target-select">Сотрудник:</label>
+                <label>Выбор сотрудника:</label>
                 <select id="target-select">
                     <option value="">-- Выберите сотрудника --</option>
                 </select>
@@ -75,8 +77,9 @@
             <div class="camera-section">
                 <div class="preview-box">
                     <img id="photo-preview-super" alt="Превью">
-                    <div id="camera-placeholder-super">
-                        <span class="icon">📷</span>
+                    <div id="camera-placeholder-super" class="camera-placeholder">
+                        <span class="placeholder-icon">👥</span>
+                        <p>Сделайте фото сотрудника</p>
                     </div>
                 </div>
                 <input type="file" id="camera-input-super" accept="image/*" capture="environment" hidden>

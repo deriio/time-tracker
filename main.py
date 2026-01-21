@@ -285,10 +285,10 @@ async def handle_setup(message: Message, bot: Bot):
     
     logger.info(f"Generating URL for Group {message.chat.id}. (Reg: {len(active_users_compact)}, Orphans: {len(orphan_names)})")
     
-    query_str = "v=8.0&" + "&".join(final_params)
+    query_str = "v=10.0&" + "&".join(final_params)
     
-    # Use loader.html to bypass cache
-    base_url = WEBAPP_URL.rstrip('/') + "/loader.html"
+    # Use index.html (default root) to bypass cache
+    base_url = WEBAPP_URL.rstrip('/') + "/"
     final_url = f"{base_url}?{query_str}"
 
     # Use URL button for group compatibility (web_app not allowed in inline keyboards in groups)

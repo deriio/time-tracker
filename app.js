@@ -103,23 +103,50 @@ function initUnauthorizedScreen() {
     const app = document.getElementById("app");
     if (app) {
         app.innerHTML = `
-            <div class="screen">
-                <h2>⛔ Доступ ограничен</h2>
-                <p style="text-align:center">Ваш аккаунт не найден в системе и нет доступных имен для регистрации.</p>
-                <p style="text-align:center;font-size:0.8em;color:#888;">ID: ${state.user.id || 'Неизвестен'}</p>
-                <button class="btn link" onclick="location.reload()">🔄 Обновить</button>
+            <div class="screen unauthorized-screen" style="text-align:center;">
+                <h2 style="background:none;-webkit-text-fill-color:white;">⛔ Доступ ограничен</h2>
+                <div class="subtitle">Ваш аккаунт не найден в системе.</div>
+                <div style="margin: 20px 0; background:rgba(255,255,255,0.05); padding:15px; border-radius:12px;">
+                    <p style="font-size:0.9em;color:var(--text-dim); margin-bottom:5px;">ID: ${state.user.id || 'Неизвестен'}</p>
+                    <p style="font-size:0.9em;color:var(--text-dim);">Username: @${state.user.username || '?'}</p>
+                </div>
+                <button class="btn secondary" onclick="location.reload()">🔄 Попробовать снова</button>
             </div>
         `;
     }
 }
 
-async function sendData(data) {
-    // NEW: Use fetch to webhook server for claim action
-    // because tg.sendData doesn't work in group inline buttons
-    try {
-        const btn = document.activeElement;
-        if (btn) btn.disabled = true;
+/**
+ * Premium Toast Notification
+ */
+function showToast(message, duration = 3000) {
+    console.log("Toast:", message);
+    let toast = document.querySelector('.toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.className = 'toast';
+        document.body.appendChild(toast);
+    }
 
+    toast.textContent = message;
+    toast.classList.add('show');
+
+    setTimeout(() => {
+        toast.classList.remove('show');
+    }, duration);
+}
+
+/**
+ * Account Binding logic
+ */
+async function sendData(data, btn = null) {
+    if (btn) {
+        btn.disabled = true;
+        btn._originalText = btn.textContent;
+        btn.textContent = "⏳ Привязка...";
+    }
+
+    try {
         const payload = {
             ...data,
             user_id: state.user.id,
@@ -127,43 +154,62 @@ async function sendData(data) {
             username: state.user.username || "Unknown"
         };
 
+        if (!state.apiUrl) {
+            throw new Error("API URL missing (w param)");
+        }
+
         const claimApiUrl = state.apiUrl.replace("/api/checkin", "/api/claim");
+        console.log("Binding account via:", claimApiUrl);
 
         const response = await fetch(claimApiUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'Bypass-Tunnel-Reminder': 'true',
+                'ngrok-skip-browser-warning': 'true'
+            },
             body: JSON.stringify(payload)
         });
 
         if (response.ok) {
             const result = await response.json();
+            console.log("Bind success:", result);
 
-            // 1. Update State
+            // Update state with new identity
             state.employeeName = result.name;
             state.role = (result.role === 'supervisor') ? 'supervisor' : 'employee';
 
-            // 2. Visual Feedback (Overlay)
+            // Success Transition
             const overlay = document.createElement("div");
-            overlay.style = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);display:flex;flex-direction:column;justify-content:center;align-items:center;z-index:9999;color:white;text-align:center;padding:20px;";
+            overlay.style = "position:fixed;top:0;left:0;width:100%;height:100%;background:#0d0d12;display:flex;flex-direction:column;justify-content:center;align-items:center;z-index:9999;color:white;text-align:center;padding:20px;backdrop-filter:blur(20px);";
             overlay.innerHTML = `
-                <div style="font-size:80px;">✅</div>
-                <h2 style="margin-top:20px;">Готово!</h2>
-                <p>Ваш аккаунт привязан.<br>Открываем терминал...</p>
+                <div style="font-size:100px; margin-bottom: 20px; animation: scaleUp 0.5s ease-out;">✅</div>
+                <h2 style="background:none;-webkit-text-fill-color:white;">Успешно!</h2>
+                <p style="font-size:18px; opacity:0.8; margin-top:10px;">Аккаунт <b>${result.name}</b> привязан.<br>Загружаем терминал...</p>
             `;
             document.body.appendChild(overlay);
 
-            // 3. Transition after short delay
             setTimeout(() => {
                 overlay.remove();
                 renderScreen();
             }, 2000);
 
         } else {
-            alert("Ошибка привязки. Обратитесь к админу.");
-            if (btn) btn.disabled = false;
+            const errBody = await response.text();
+            console.error("Bind failed:", errBody);
+            showToast("Ошибка привязки. Проверьте список сотрудников.");
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = btn._originalText;
+            }
         }
     } catch (e) {
-        alert("Ошибка сети: " + e.message);
+        console.error("Bind network error:", e);
+        showToast("Ошибка сети: " + e.message);
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = btn._originalText;
+        }
     }
 }
 
@@ -206,7 +252,7 @@ function initOrphanScreen() {
         sendData({
             action: "claim",
             full_name: select.value
-        });
+        }, btn);
     });
 }
 
@@ -220,12 +266,12 @@ function initEmployeeScreen() {
         document.getElementById("btn-check-out").disabled = false;
     });
 
-    document.getElementById("btn-check-in").addEventListener("click", () => {
-        submitData("check_in");
+    document.getElementById("btn-check-in").addEventListener("click", (e) => {
+        submitData("check_in", null, e.currentTarget);
     });
 
-    document.getElementById("btn-check-out").addEventListener("click", () => {
-        submitData("check_out");
+    document.getElementById("btn-check-out").addEventListener("click", (e) => {
+        submitData("check_out", null, e.currentTarget);
     });
 }
 
@@ -260,8 +306,8 @@ function initSupervisorScreen() {
         btnOut.disabled = !ok;
     }
 
-    btnIn.addEventListener("click", () => submitData("check_in", state.targetUserId));
-    btnOut.addEventListener("click", () => submitData("check_out", state.targetUserId));
+    btnIn.addEventListener("click", (e) => submitData("check_in", state.targetUserId, e.currentTarget));
+    btnOut.addEventListener("click", (e) => submitData("check_out", state.targetUserId, e.currentTarget));
 }
 
 // CAMERA HELPER
@@ -295,33 +341,34 @@ function setupCamera(inputId, imgId, placeholderId, btnId, retakeId, onCapture) 
 }
 
 // COMMUNICATION
-async function submitData(action, targetId = null) {
-    if (!state.photoBase64) return;
+async function submitData(action, targetId = null, btn = null) {
+    if (!state.photoBase64) {
+        showToast("Сначала сделайте фото!");
+        return;
+    }
 
-    const btn = document.activeElement;
     let originalText = "";
-    let originalColor = "";
-
-    // 1. Visual feedback on BUTTON ONLY
     if (btn) {
         originalText = btn.textContent;
-        originalColor = btn.style.backgroundColor;
-
         btn.disabled = true;
-        btn.textContent = "⏳";
-        btn.style.backgroundColor = "#555"; // Grey deactived
+        btn.textContent = "⏳ Отправка...";
     }
 
     try {
         const payload = {
             action: action,
             photo: state.photoBase64,
-            user_id: state.user.id, // Will be undefined if NO initData
+            user_id: state.user.id,
             group_id: state.groupId,
             employee_name: targetId || state.employeeName || state.user.first_name,
             target_user_id: targetId
         };
 
+        if (!state.apiUrl) {
+            throw new Error("Webhook URL (w) missing");
+        }
+
+        console.log(`Submitting ${action} to: ${state.apiUrl}`);
         const response = await fetch(state.apiUrl, {
             method: 'POST',
             headers: {
@@ -333,38 +380,38 @@ async function submitData(action, targetId = null) {
         });
 
         if (response.ok) {
-            // 2. Success Feedback (Only NOW replace screen)
+            // Success screen
             document.body.innerHTML = `
-                <div style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;background-color:#000;color:white;">
-                     <div style="font-size:80px;">✅</div>
-                     <h2 style="margin-top:20px;">Готово!</h2>
+                <div style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;background-color:#0d0d12;color:white;text-align:center;">
+                     <div style="font-size:100px; margin-bottom: 20px;">✅</div>
+                     <h2 style="background:none;-webkit-text-fill-color:white;">Данные отправлены</h2>
+                     <p style="opacity:0.8; margin-top: 10px;">Отчет сохранен в системе.</p>
                 </div>
             `;
 
-            // 3. Close Logic
             setTimeout(() => {
                 if (window.Telegram && window.Telegram.WebApp) {
                     window.Telegram.WebApp.close();
                 } else {
                     window.close();
                 }
-            }, 1000);
+            }, 1500);
 
         } else {
-            // Error: Restore button
-            alert("Ошибка сервера: " + response.status);
+            const err = await response.text();
+            console.error("Submit error:", err);
+            showToast("Ошибка сервера: " + response.status);
             if (btn) {
                 btn.disabled = false;
                 btn.textContent = originalText;
-                btn.style.backgroundColor = originalColor;
             }
         }
     } catch (e) {
-        alert("Ошибка сети: " + e.message);
+        console.error("Submit fetch error:", e);
+        showToast("Ошибка сети: " + e.message);
         if (btn) {
             btn.disabled = false;
             btn.textContent = originalText;
-            btn.style.backgroundColor = originalColor;
         }
     }
 }
