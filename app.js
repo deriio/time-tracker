@@ -24,10 +24,16 @@ async function init() {
 
     console.log("WebApp Init", state.user);
 
+    // STARTUP DEBUG
+    // alert("App Init! User: " + (state.user.id || "None"));
+
     // Bypass check if debug mode is on
+    // TEMPORARY: Allow empty user (some Telegram clients lag with initData)
     if (!state.user.id && !isDebug) {
-        showError("Пожалуйста, откройте это приложение из Telegram.");
-        return;
+        // Mock user if missing (FOR TESTING)
+        state.user = { id: 999999, first_name: "TestUser", username: "test" };
+        // showError("Пожалуйста, откройте это приложение из Telegram.");
+        // return;
     }
 
     // Default mock user for debug
