@@ -24,16 +24,8 @@ async function init() {
 
     console.log("WebApp Init", state.user);
 
-    // STARTUP DEBUG
-    // alert("App Init! User: " + (state.user.id || "None"));
-
-    // STARTUP DEBUG
-    // STARTUP DEBUG REMOVED
-
-    // Mock user for safety
-    if (!state.user.id) {
-        state.user = { id: 999999, first_name: "NoUser", username: "debug" };
-    }
+    // Mock user REMOVED to prevent 999999 ID issue.
+    // If no user, state.user.id will be undefined.
 
     // Identify user role and get initial lists
     const orphanData = params.get("orphans");
@@ -90,12 +82,7 @@ async function init() {
     }
 
     // Role detection logic
-    // Now state.employeeList contains strings (names), not objects.
     const isSupervisor = params.get("is_super") === "1";
-
-    // Attempt to find current user's name if they are an employee
-    // (Note: This is hard without ID mapping in URL, but we can assume if they aren't super/orphan, they check for themselves)
-    // Actually, we'll use first_name as fallback if they aren't in any list.
 
     if (isSupervisor) {
         state.role = "supervisor";
@@ -104,11 +91,6 @@ async function init() {
         state.employeeName = state.user.first_name || "Сотрудник";
     } else {
         state.role = "orphan";
-    }
-
-    // Attempt name detection if employee
-    if (state.role === "employee" && state.user.id) {
-        // Logic to find name from list can be added, but for now we use first_name
     }
 
     renderScreen();
@@ -138,8 +120,8 @@ function renderScreen() {
             debugP.style.color = "orange";
             debugP.style.fontSize = "10px";
             debugP.style.marginTop = "5px";
-            const rawLen = (empData || "").length;
-            debugP.textContent = `Внимание: Список пуст. Параметр: ${rawLen} байт.`;
+            const rawLen = (params.get("employees") || "").length;
+            debugP.textContent = `Внимание: Список пуст.`;
             select.parentNode.appendChild(debugP);
         }
     }
@@ -205,7 +187,7 @@ function initSupervisorScreen() {
     });
 
     select.addEventListener("change", () => {
-        state.targetUserId = select.value;
+        state.targetUserId = select.value; // Here we use Name as ID because we don't have map
         validateSupervisor();
     });
 
@@ -258,25 +240,28 @@ async function submitData(action, targetId = null) {
     if (!state.photoBase64) return;
 
     const btn = document.activeElement;
-    if (btn) btn.disabled = true;
+    let originalText = "";
+    let originalColor = "";
 
-    // We can't use tg.sendData because it fails in groups.
-    // Instead, we call our own API.
+    // 1. Visual feedback on BUTTON ONLY
+    if (btn) {
+        originalText = btn.textContent;
+        originalColor = btn.style.backgroundColor;
+
+        btn.disabled = true;
+        btn.textContent = "⏳";
+        btn.style.backgroundColor = "#555"; // Grey deactived
+    }
+
     try {
         const payload = {
             action: action,
             photo: state.photoBase64,
-            user_id: state.user.id,
+            user_id: state.user.id, // Will be undefined if NO initData
             group_id: state.groupId,
             employee_name: targetId || state.employeeName || state.user.first_name,
             target_user_id: targetId
         };
-
-        // Visual feedback: sending state
-        const originalText = btn ? btn.textContent : "";
-        if (btn) {
-            btn.textContent = "⏳ Отправка...";
-        }
 
         const response = await fetch(state.apiUrl, {
             method: 'POST',
@@ -289,32 +274,39 @@ async function submitData(action, targetId = null) {
         });
 
         if (response.ok) {
-            // Success feedback
-            if (btn) btn.style.backgroundColor = "#28a745"; // Green
-
-            // Show big success message
+            // 2. Success Feedback (Only NOW replace screen)
             document.body.innerHTML = `
                 <div style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;background-color:#000;color:white;">
-                    <h1 style="font-size:60px;">✅</h1>
-                    <h2 style="margin-top:20px;">Принято!</h2>
+                     <div style="font-size:80px;">✅</div>
+                     <h2 style="margin-top:20px;">Готово!</h2>
                 </div>
             `;
 
-            // Close after delay
+            // 3. Close Logic
             setTimeout(() => {
-                tg.close();
-            }, 1500);
+                if (window.Telegram && window.Telegram.WebApp) {
+                    window.Telegram.WebApp.close();
+                } else {
+                    window.close();
+                }
+            }, 1000);
 
         } else {
+            // Error: Restore button
             alert("Ошибка сервера: " + response.status);
             if (btn) {
                 btn.disabled = false;
                 btn.textContent = originalText;
+                btn.style.backgroundColor = originalColor;
             }
         }
     } catch (e) {
         alert("Ошибка сети: " + e.message);
-        if (btn) btn.disabled = false;
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = originalText;
+            btn.style.backgroundColor = originalColor;
+        }
     }
 }
 
