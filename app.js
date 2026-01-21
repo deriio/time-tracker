@@ -7,6 +7,7 @@ if (tg) {
 // State
 const state = {
     user: tg?.initDataUnsafe?.user || {},
+    initData: tg?.initData || "",
     role: null, // "employee", "supervisor", "orphan"
     photoBase64: null,
     orphanList: [],
@@ -14,64 +15,50 @@ const state = {
     targetUserId: null,
     groupId: null,
     employeeName: null,
-    apiUrl: null // Will be set from URL params (w parameter)
+    apiUrl: null
 };
 
 // Start
 async function init() {
     const params = new URLSearchParams(window.location.search);
     state.groupId = params.get("g");
-    state.apiUrl = params.get("w"); // Checkin endpoint: .../api/checkin
-
-    console.log("WebApp Init Starting...");
+    state.apiUrl = params.get("w");
 
     if (!state.apiUrl) {
-        showError("Критическая ошибка: отсутствует адрес API (параметр 'w'). Попросите админа пересоздать кнопку.");
+        showError("Критическая ошибка: отсутствует адрес API.");
         return;
     }
 
     try {
-        // 1. Fetch Dynamic Config from our Server
         const configUrl = state.apiUrl.replace("/api/checkin", "/api/config");
-        console.log("Fetching config from:", configUrl);
-
         const response = await fetch(configUrl, {
             headers: {
-                'Bypass-Tunnel-Reminder': 'true',
-                'ngrok-skip-browser-warning': 'true'
+                'X-Telegram-Init-Data': state.initData,
+                'Bypass-Tunnel-Reminder': 'true'
             }
         });
 
-        if (!response.ok) throw new Error(`Server status: ${response.status}`);
-
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const config = await response.json();
-        if (!config.ok) throw new Error(config.error || "Unknown server error");
 
-        // 2. Map Data to State
+        if (!config.ok) throw new Error(config.error || "Server error");
+
         state.orphanList = config.orphans || [];
-        const users = config.users || []; // [[id, name, role_char], ...]
+        const users = config.users || [];
         const myId = String(state.user.id);
-
-        // 3. Identify User
         const me = users.find(u => String(u[0]) === myId);
 
         if (me) {
             state.employeeName = me[1];
             state.role = (me[2] === 's') ? 'supervisor' : 'employee';
-            // For supervisor, we need the names of all employees
             state.employeeList = users.map(u => u[1]);
-            console.log(`Identified as: ${state.employeeName} (${state.role})`);
         } else {
-            // Not registered yet
             state.role = "orphan";
         }
-
-        console.log("Init Complete. Role:", state.role);
         renderScreen();
-
     } catch (err) {
-        console.error("Initialization Failed:", err);
-        showError(`Ошибка загрузки данных: ${err.message}. Проверьте соединение с сервером.`);
+        console.error("Init Error:", err);
+        showError(`Ошибка загрузки: ${err.message}`);
     }
 }
 
@@ -137,7 +124,10 @@ async function sendData(data, btn = null) {
 
         const response = await fetch(claimApiUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Telegram-Init-Data': state.initData
+            },
             body: JSON.stringify(payload)
         });
 
@@ -338,8 +328,7 @@ async function submitData(action, targetId = null, btn = null) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Bypass-Tunnel-Reminder': 'true',
-                'ngrok-skip-browser-warning': 'true'
+                'X-Telegram-Init-Data': state.initData
             },
             body: JSON.stringify(payload)
         });

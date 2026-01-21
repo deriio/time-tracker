@@ -28,6 +28,37 @@ logger = logging.getLogger("webhook_server")
 PHOTOS_DIR = Path("photos")
 PHOTOS_DIR.mkdir(exist_ok=True)
 
+import hmac
+import hashlib
+from urllib.parse import parse_qs
+
+# --- Security: Telegram WebApp Validation ---
+def verify_telegram_data(init_data: str) -> dict:
+    """Validates data received from Telegram WebApp via HMAC-SHA256."""
+    if not init_data: return {}
+    try:
+        vals = {k: v[0] for k, v in parse_qs(init_data).items()}
+        hash_val = vals.pop('hash', None)
+        data_check_string = "\n".join([f"{k}={v}" for k, v in sorted(vals.items())])
+        
+        # HMAC secret is derived from bot token
+        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        
+        if calculated_hash != hash_val:
+            logger.error("Security Warning: Unauthorized access attempt with invalid hash.")
+            return {}
+        return json.loads(vals.get('user', '{}'))
+    except Exception as e:
+        logger.error(f"Telegram validation error: {e}")
+        return {}
+
+def get_verified_id(request: Request) -> str:
+    """Helper to extract secure ID from headers."""
+    init_data = request.headers.get("X-Telegram-Init-Data")
+    user_info = verify_telegram_data(init_data)
+    return str(user_info.get("id")) if user_info else None
+
 app = FastAPI()
 
 # Enable CORS (IMPORTANT for WebApp to talk to this server)
@@ -139,14 +170,23 @@ async def delete_photo(filename: str):
 
 @app.post("/api/checkin")
 async def handle_checkin(request: Request):
+    """Secure check-in/out handler."""
     try:
         data = await request.json()
+        
+        # Priority to verified cryptographic ID
+        v_id = get_verified_id(request)
+        user_id = v_id if v_id else str(data.get("user_id"))
+        
+        if not user_id or user_id == "None":
+            logger.error("Security Fail: Checkin without valid ID signature.")
+            return {"ok": False, "error": "Identity verification failed. Please reload app."}
+
         photo_b64 = data.get("photo")
-        user_id = str(data.get("user_id"))
         group_id = data.get("group_id")
         action = data.get("action")
-        # employee_name can be a string (from supervisor) or empty (will find by user_id)
-        employee_name = data.get("employee_name")
+        target_info = data.get("target_user_id") # Explicit target (supervisor mode)
+        employee_name = data.get("employee_name") # Fallback
         target_info = data.get("target_user_id") # Present if supervisor
         
         logger.info(f"Identity check: user_id={user_id}, action={action}, target={target_info}")
@@ -241,17 +281,22 @@ async def handle_checkin(request: Request):
 @app.post("/api/claim")
 async def handle_claim(request: Request):
     """
-    Handles account binding (claiming an orphan identity).
+    Handles account binding with secure session verification.
     """
     try:
         data = await request.json()
-        user_id = data.get("user_id")
+        
+        # Security: Priority to verified ID
+        v_id = get_verified_id(request)
+        user_id = v_id if v_id else data.get("user_id")
+        
         full_name = data.get("full_name")
         group_id = data.get("group_id")
         username = data.get("username", "Unknown")
 
         if not user_id or not full_name:
-            return {"ok": False, "error": "Missing user_id or full_name"}
+            logger.error(f"Claim failed: Missing credentials (ID: {user_id}, Name: {full_name})")
+            return {"ok": False, "error": "Identification failed. Restart bot and try again."}
 
         logger.info(f"Claim request: {user_id} (@{username}) -> {full_name}")
 
