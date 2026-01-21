@@ -250,14 +250,21 @@ async def handle_setup(message: Message, bot: Bot):
         return base64.urlsafe_b64encode(j.encode('utf-8')).decode('ascii').rstrip('=')
 
     # Pass everything in the URL
+    # Pass everything in the URL
     final_params = []
+    
+    logger.info(f"Generating URL for {user_id}. Super: {is_super}. Admins: {ADMIN_IDS}")
+
     if is_super:
         active_names = [u["name"] for u in users_v2 if u["status"].strip().lower() == "active"]
-        final_params.append(f"e={b64_safe(active_names)}")
-        final_params.append("s=1")
+        # logic.js expects 'employees', not 'e'
+        final_params.append(f"employees={b64_safe(active_names)}")
+        # logic.js expects 'is_super', not 's'
+        final_params.append("is_super=1")
     else:
         orphan_names = sheet_manager.get_orphan_users()
-        final_params.append(f"o={b64_safe(orphan_names)}")
+        # logic.js expects 'orphans', not 'o'
+        final_params.append(f"orphans={b64_safe(orphan_names)}")
     
     # CRITICAL: Pass current Group ID
     final_params.append(f"g={message.chat.id}")
