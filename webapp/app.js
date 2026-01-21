@@ -272,6 +272,9 @@ async function submitData(action, targetId = null) {
             target_user_id: targetId
         };
 
+        // DEBUG: Confirm URL before sending
+        alert("Sending to: " + state.apiUrl);
+
         const response = await fetch(state.apiUrl, {
             method: 'POST',
             headers: {

@@ -269,7 +269,10 @@ async def handle_setup(message: Message, bot: Bot):
 
     
     query_str = "v=5.0&" + "&".join(final_params)
-    final_url = f"{WEBAPP_URL}?{query_str}"
+    
+    # Use loader.html to bypass cache
+    base_url = WEBAPP_URL.rstrip('/') + "/loader.html"
+    final_url = f"{base_url}?{query_str}"
 
     # Use URL button for group compatibility (web_app not allowed in inline keyboards in groups)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
