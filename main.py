@@ -192,30 +192,37 @@ async def handle_setup(message: Message, bot: Bot):
         logger.warning(f"Admin access denied for {message.from_user.id}")
         return
 
-    # No need to refresh/fetch users here anymore, WebApp will do it via API
-    params = []
+    if not WEBAPP_URL or not WEBHOOK_SERVER_URL:
+        return await message.answer("❌ WEBAPP_URL or WEBHOOK_SERVER_URL not set in .env")
+
+    # Clean WEBAPP_URL (remove trailing slash)
+    base_url = WEBAPP_URL.rstrip("/")
+    uid = str(message.from_user.id)
     
-    # 1. Context
-    params.append(f"g={message.chat.id}")
+    # Professional 'Dual-Link' Strategy:
+    # 1. WebAppInfo handles the secure Telegram overlay (Mini App mode)
+    # 2. URL params (u=...) provide a bulletproof fallback if SDK fails
+    # 3. v=timestamp breaks the cache
+    import time
+    webapp_final_url = f"{base_url}/index.html?g={message.chat.id}&w={WEBHOOK_SERVER_URL}/api/checkin&u={uid}&v={int(time.time())}"
     
-    # 2. API Endpoint base
-    if WEBHOOK_SERVER_URL:
-        params.append(f"w={WEBHOOK_SERVER_URL.rstrip('/')}/api/checkin")
-
-    query_str = "v=12.0&" + "&".join(params) 
-    final_url = f"{WEBAPP_URL.rstrip('/')}/?{query_str}"
-
-    logger.info(f"Generated short URL for Group {message.chat.id}")
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📸 Открыть терминал учета", url=final_url)]
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="📸 Открыть терминал учета", 
+            web_app=WebAppInfo(url=webapp_final_url)
+        )]
     ])
-    
+
     msg = await message.answer(
-        "🏭 **Терминал Учёта Времени**\n\nЧтобы отметиться, нажмите кнопку ниже.\nКамера откроется прямо здесь.",
-        reply_markup=keyboard,
+        "🏰 **Терминал Учёта Времени**\n\n"
+        "Чтобы отметиться, нажмите кнопку ниже.\n"
+        "Камера откроется прямо здесь.",
+        reply_markup=kb,
         parse_mode="Markdown"
     )
+    logger.info(f"Generated secure MiniApp button for Chat:{message.chat.id}")
     if message.chat.type != "private":
         try: await msg.pin(disable_notification=True)
         except: pass

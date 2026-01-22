@@ -18,17 +18,27 @@ const state = {
     apiUrl: null
 };
 
-// Start with Retries
+// Start with Retries and Dual-Source ID Tracking
 async function init(retryCount = 0) {
     const params = new URLSearchParams(window.location.search);
     state.groupId = params.get("g");
     state.apiUrl = params.get("w");
+    const fallbackId = params.get("u");
+
+    console.log(`[Init] Attempt ${retryCount + 1}. SDK ID: ${state.user?.id}, Fallback ID: ${fallbackId}`);
+
+    // If SDK is empty but URL has the ID, use it as a reliable fallback
+    if (!state.user?.id && fallbackId) {
+        state.user = state.user || {};
+        state.user.id = fallbackId;
+        console.log("Identity secured via URL fallback.");
+    }
 
     // Guard: Retry if user data is still missing (common on iOS)
-    if (!state.user.id && retryCount < 3) {
+    if (!state.user?.id && retryCount < 3) {
         console.warn(`[Retry ${retryCount + 1}] Waiting for Telegram user data...`);
         await new Promise(r => setTimeout(r, 1000));
-        state.user = window.Telegram?.WebApp?.initDataUnsafe?.user || {};
+        state.user = window.Telegram?.WebApp?.initDataUnsafe?.user || state.user || {};
         state.initData = window.Telegram?.WebApp?.initData || "";
         return init(retryCount + 1);
     }
@@ -44,7 +54,7 @@ async function init(retryCount = 0) {
         const configUrl = state.apiUrl.replace("/api/checkin", "/api/config");
         const response = await fetch(configUrl, {
             headers: {
-                'X-Telegram-Init-Data': state.initData,
+                'X-Telegram-Init-Data': state.initData || "",
                 'Bypass-Tunnel-Reminder': 'true'
             }
         });
@@ -55,7 +65,7 @@ async function init(retryCount = 0) {
 
         state.orphanList = config.orphans || [];
         const users = config.users || [];
-        const myId = String(state.user.id);
+        const myId = String(state.user?.id || "");
         const me = users.find(u => String(u[0]) === myId);
 
         if (me) {
