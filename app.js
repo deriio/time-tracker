@@ -18,11 +18,22 @@ const state = {
     apiUrl: null
 };
 
-// Start
-async function init() {
+// Start with Retries
+async function init(retryCount = 0) {
     const params = new URLSearchParams(window.location.search);
     state.groupId = params.get("g");
     state.apiUrl = params.get("w");
+
+    // Guard: Retry if user data is still missing (common on iOS)
+    if (!state.user.id && retryCount < 3) {
+        console.warn(`[Retry ${retryCount + 1}] Waiting for Telegram user data...`);
+        await new Promise(r => setTimeout(r, 1000));
+        state.user = window.Telegram?.WebApp?.initDataUnsafe?.user || {};
+        state.initData = window.Telegram?.WebApp?.initData || "";
+        return init(retryCount + 1);
+    }
+
+    updateDebugFooter();
 
     if (!state.apiUrl) {
         showError("Критическая ошибка: отсутствует адрес API.");
@@ -40,7 +51,6 @@ async function init() {
 
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const config = await response.json();
-
         if (!config.ok) throw new Error(config.error || "Server error");
 
         state.orphanList = config.orphans || [];
@@ -60,6 +70,17 @@ async function init() {
         console.error("Init Error:", err);
         showError(`Ошибка загрузки: ${err.message}`);
     }
+}
+
+function updateDebugFooter() {
+    let footer = document.getElementById("debug-footer");
+    if (!footer) {
+        footer = document.createElement("div");
+        footer.id = "debug-footer";
+        footer.style = "position:fixed;bottom:2px;left:0;width:100%;text-align:center;font-size:9px;color:rgba(255,255,255,0.15);pointer-events:none;z-index:9999;font-family:monospace;";
+        document.body.appendChild(footer);
+    }
+    footer.innerText = `ID: ${state.user.id || 'N/A'} | SDK: ${tg.version} | ${new Date().toLocaleTimeString()}`;
 }
 
 function initUnauthorizedScreen() {
@@ -112,6 +133,7 @@ async function sendData(data, btn = null) {
     try {
         const payload = {
             ...data,
+            _initData: state.initData, // Secure transmission in Body
             user_id: state.user.id,
             group_id: state.groupId,
             username: state.user.username || "Unknown"
@@ -312,11 +334,12 @@ async function submitData(action, targetId = null, btn = null) {
     try {
         const payload = {
             action: action,
+            _initData: state.initData, // Secure transmission in Body
             photo: state.photoBase64,
             user_id: state.user.id,
             group_id: state.groupId,
-            employee_name: targetId || state.employeeName || state.user.first_name,
-            target_user_id: targetId
+            employee_name: (state.role === 'supervisor') ? "" : state.employeeName,
+            target_user_id: (state.role === 'supervisor') ? state.targetUserId : ""
         };
 
         if (!state.apiUrl) {

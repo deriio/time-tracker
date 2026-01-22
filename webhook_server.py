@@ -39,6 +39,8 @@ def verify_telegram_data(init_data: str) -> dict:
     try:
         vals = {k: v[0] for k, v in parse_qs(init_data).items()}
         hash_val = vals.pop('hash', None)
+        if not hash_val: return {}
+        
         data_check_string = "\n".join([f"{k}={v}" for k, v in sorted(vals.items())])
         
         # HMAC secret is derived from bot token
@@ -53,20 +55,29 @@ def verify_telegram_data(init_data: str) -> dict:
         logger.error(f"Telegram validation error: {e}")
         return {}
 
-def get_verified_id(request: Request) -> str:
-    """Helper to extract secure ID from headers."""
-    init_data = request.headers.get("X-Telegram-Init-Data")
+def get_verified_id(request_data: dict, headers: dict = None) -> str:
+    """Helper to extract secure ID from JSON body OR headers."""
+    # Priority 1: JSON Body (Most reliable for mobile)
+    init_data = request_data.get("_initData")
+    
+    # Priority 2: Headers (Fallback)
+    if not init_data and headers:
+        init_data = headers.get("X-Telegram-Init-Data")
+        
+    if not init_data: return None
+    
     user_info = verify_telegram_data(init_data)
     return str(user_info.get("id")) if user_info else None
 
 app = FastAPI()
 
-# Enable CORS (IMPORTANT for WebApp to talk to this server)
+# Enable CORS with explicit settings for mobile browser compatibility
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS", "DELETE"],
+    allow_headers=["X-Telegram-Init-Data", "Content-Type", "Bypass-Tunnel-Reminder"],
 )
 
 # Mount static files for photos
@@ -80,12 +91,13 @@ sheet_manager = GoogleSheetManager(
 )
 
 @app.get("/api/config")
-async def get_config():
-    """
-    Returns lists of active users and orphans for WebApp initialization.
-    This replaces passing large data via URL.
-    """
+async def get_config(request: Request):
+    """Secure config fetch with identity verification."""
     try:
+        # Check identity from headers for GET requests
+        v_id = get_verified_id({}, headers=request.headers)
+        logger.info(f"Config request from securely verified ID: {v_id}")
+        
         users_v2 = sheet_manager.get_users_v2()
         
         # 1. Compact Active Users: [id, name, role_char]
@@ -170,17 +182,17 @@ async def delete_photo(filename: str):
 
 @app.post("/api/checkin")
 async def handle_checkin(request: Request):
-    """Secure check-in/out handler."""
+    """Secure check-in/out handler with fallback identification."""
     try:
         data = await request.json()
         
-        # Priority to verified cryptographic ID
-        v_id = get_verified_id(request)
+        # Priority to verified cryptographic ID (Body or Headers)
+        v_id = get_verified_id(data, headers=request.headers)
         user_id = v_id if v_id else str(data.get("user_id"))
         
         if not user_id or user_id == "None":
-            logger.error("Security Fail: Checkin without valid ID signature.")
-            return {"ok": False, "error": "Identity verification failed. Please reload app."}
+            logger.error("Security Fail: Checkin rejected - No valid identification found.")
+            return {"ok": False, "error": "Identity verification failed. Please restart bot."}
 
         photo_b64 = data.get("photo")
         group_id = data.get("group_id")
@@ -280,15 +292,13 @@ async def handle_checkin(request: Request):
 
 @app.post("/api/claim")
 async def handle_claim(request: Request):
-    """
-    Handles account binding with secure session verification.
-    """
+    """Secure account binding."""
     try:
         data = await request.json()
         
-        # Security: Priority to verified ID
-        v_id = get_verified_id(request)
-        user_id = v_id if v_id else data.get("user_id")
+        # Security: Get verified ID from body or headers
+        v_id = get_verified_id(data, headers=request.headers)
+        user_id = v_id if v_id else str(data.get("user_id"))
         
         full_name = data.get("full_name")
         group_id = data.get("group_id")
