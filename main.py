@@ -151,14 +151,6 @@ dp = Dispatcher()
 dp.update.outer_middleware(OuterLoggerMiddleware())
 dp.message.middleware(AuthMiddleware())
 
-# Fresh Cache Command
-@dp.message(Command("update"))
-async def handle_update(message: Message):
-    if message.from_user.id not in ADMIN_IDS: return
-    if refresh_user_cache():
-        await message.reply("✅ База пользователей обновлена.")
-    else:
-        await message.reply("❌ Ошибка обновления базы.")
 
 # Admin Tools
 @dp.message(Command("debug_users"))
@@ -200,20 +192,22 @@ async def handle_setup(message: Message, bot: Bot):
     uid = str(message.from_user.id)
     
     # Professional 'Dual-Link' Strategy:
-    # 1. WebAppInfo handles the secure Telegram overlay (Mini App mode)
-    # 2. URL params (u=...) provide a bulletproof fallback if SDK fails
-    # 3. v=timestamp breaks the cache
+    # 1. WebAppInfo handles the secure Telegram overlay (Mini App mode - Private only)
+    # 2. Standard URL handles Group chats (Telegram limitation)
+    # 3. URL params (u=...) provide a bulletproof fallback if SDK fails
     import time
     webapp_final_url = f"{base_url}/index.html?g={message.chat.id}&w={WEBHOOK_SERVER_URL}/api/checkin&u={uid}&v={int(time.time())}"
     
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
     
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text="📸 Открыть терминал учета", 
-            web_app=WebAppInfo(url=webapp_final_url)
-        )]
-    ])
+    # Critical Fix: Telegram allows web_app button ONLY in private chats.
+    # For groups, we must use a standard URL button.
+    if message.chat.type == "private":
+        btn = InlineKeyboardButton(text="📸 Открыть терминал учета", web_app=WebAppInfo(url=webapp_final_url))
+    else:
+        btn = InlineKeyboardButton(text="📸 Открыть терминал учета", url=webapp_final_url)
+        
+    kb = InlineKeyboardMarkup(inline_keyboard=[[btn]])
 
     msg = await message.answer(
         "🏰 **Терминал Учёта Времени**\n\n"
@@ -222,7 +216,7 @@ async def handle_setup(message: Message, bot: Bot):
         reply_markup=kb,
         parse_mode="Markdown"
     )
-    logger.info(f"Generated secure MiniApp button for Chat:{message.chat.id}")
+    logger.info(f"Generated secure button for {message.chat.type} chat:{message.chat.id}")
     if message.chat.type != "private":
         try: await msg.pin(disable_notification=True)
         except: pass
