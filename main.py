@@ -15,7 +15,9 @@ from aiogram.types import (
     ReplyKeyboardRemove,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    CallbackQuery
+    CallbackQuery,
+    MenuButtonWebApp,
+    ChatMemberUpdated
 )
 from typing import Callable, Dict, Any, Awaitable, Union
 
@@ -66,7 +68,7 @@ def refresh_user_cache():
         USER_CACHE_UNAME = {u["username"]: u for u in users_v2 if u["username"]}
         ALL_NAMES_SET = {u["name"] for u in users_v2 if u["status"] == "active"}
         
-        logger.info(f"Cache Refreshed: {len(USER_CACHE_ID)} IDs, {len(USER_CACHE_UNAME)} usernames.")
+        logger.info(f"Cache Refreshed: {len(USER_CACHE_ID)} IDs, {len(USER_CACHE_UNAME)} usernames, {len(ALL_NAMES_SET)} names.")
         return True
     except Exception as e:
         logger.error(f"Cache refresh failed: {e}")
@@ -98,9 +100,11 @@ class AuthMiddleware(BaseMiddleware):
         if not user or not sheet_manager:
             return await handler(event, data)
 
-        # Bypass for system commands
-        if hasattr(event, "text") and event.text and event.text.startswith(("/update", "/setup_checkin")):
-            return await handler(event, data)
+        if event.chat.type != "private":
+            # In groups, only allow commands if they are from an admin
+            if event.text and event.text.startswith("/") and user.id in ADMIN_IDS:
+                return await handler(event, data)
+            return
 
         tg_id = str(user.id)
         raw_username = user.username or ""
@@ -125,7 +129,7 @@ class AuthMiddleware(BaseMiddleware):
             data["user_role"] = user_data["role"]
             return await handler(event, data)
 
-        # 3. Handle Unauthorized/Orphans
+        # 3. Handle Unauthorized/Orphans (Private chats only)
         if event.photo or (event.text and not event.text.startswith("/")):
             await event.answer("⚠️ Вы не авторизованы. Нажмите на кнопку под сообщением терминала, чтобы привязать аккаунт.")
             return
@@ -175,16 +179,36 @@ async def handle_update_full(message: Message):
     if message.from_user.id not in ADMIN_IDS: return
     await message.reply("🔄 Обновление базы из таблиц...")
     if refresh_user_cache():
-        # Optionally sync to current month too as requested in legacy
+        # Sync users to current month folders for both departments
         try:
             users_list = sheet_manager.get_users_v2()
-            raw_rows = [[u["name"], "@"+u["username"]] for u in users_list]
-            sync_result = sheet_manager.sync_users_to_current_month(raw_rows)
+            sync_result = sheet_manager.sync_users_to_current_month(users_list)
             await message.reply(f"✅ Успешно.\nПользователей: {len(ALL_NAMES_SET)}\n{sync_result}")
         except Exception as e:
-            await message.reply(f"✅ Кэш обновлен, но синхронизация месяца не удалась: {e}")
+            await message.reply(f"✅ Кэш обновлен, но синхронизация не удалась: {e}")
     else:
         await message.reply("❌ Ошибка при обновлении кэша.")
+
+# Helper for dynamic WebApp URL
+def get_webapp_url(user_id, chat_id=None):
+    if not WEBAPP_URL or not WEBHOOK_SERVER_URL:
+        return None
+    base_url = WEBAPP_URL.rstrip("/")
+    uid = str(user_id)
+    cid = str(chat_id) if chat_id else uid
+    import time
+    return f"{base_url}/index.html?g={cid}&w={WEBHOOK_SERVER_URL}/api/checkin&u={uid}&v={int(time.time())}"
+
+def get_main_keyboard(user_id, chat_id=None):
+    url = get_webapp_url(user_id, chat_id)
+    if not url: return None
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📸 Сделать отчет", web_app=WebAppInfo(url=url))]
+        ],
+        resize_keyboard=True,
+        is_persistent=True
+    )
 
 @dp.message(Command("setup_checkin"))
 async def handle_setup(message: Message, bot: Bot):
@@ -192,25 +216,13 @@ async def handle_setup(message: Message, bot: Bot):
         logger.warning(f"Admin access denied for {message.from_user.id}")
         return
 
-    if not WEBAPP_URL or not WEBHOOK_SERVER_URL:
+    webapp_final_url = get_webapp_url(message.from_user.id, message.chat.id)
+    if not webapp_final_url:
         return await message.answer("❌ WEBAPP_URL or WEBHOOK_SERVER_URL not set in .env")
 
-    # Clean WEBAPP_URL (remove trailing slash)
-    base_url = WEBAPP_URL.rstrip("/")
-    uid = str(message.from_user.id)
-    
-    # Professional 'Dual-Link' Strategy:
-    # 1. WebAppInfo handles the secure Telegram overlay (Mini App mode)
-    # 2. URL params (u=...) provide a bulletproof fallback if SDK fails
-    # 3. v=timestamp breaks the cache
-    import time
-    webapp_final_url = f"{base_url}/index.html?g={message.chat.id}&w={WEBHOOK_SERVER_URL}/api/checkin&u={uid}&v={int(time.time())}"
-    
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-    
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text="📸 Открыть терминал учета", 
+            text="📸 Сделать отчет", 
             web_app=WebAppInfo(url=webapp_final_url)
         )]
     ])
@@ -228,8 +240,30 @@ async def handle_setup(message: Message, bot: Bot):
         except: pass
 
 @dp.message(CommandStart())
-async def handle_start(message: Message):
-    await message.answer("Бот запущен. Пожалуйста, используйте кнопку в своей группе.")
+async def handle_start(message: Message, bot: Bot):
+    url = get_webapp_url(message.from_user.id, message.chat.id)
+    if not url:
+        return await message.answer("❌ Бот не настроен (URL).")
+
+    # 1. Reply Keyboard (Persistent big button)
+    kb = get_main_keyboard(message.from_user.id, message.chat.id)
+
+    # 2. Menu Button (Button next to paperclip)
+    try:
+        await bot.set_chat_menu_button(
+            chat_id=message.chat.id,
+            menu_button=MenuButtonWebApp(text="Сделать отчет", web_app=WebAppInfo(url=url))
+        )
+    except Exception as e:
+        logger.warning(f"Failed to set menu button: {e}")
+
+    await message.answer(
+        "👋 **Добро пожаловать!**\n\n"
+        "Чтобы начать или закончить смену, нажмите кнопку ниже **«Сделать отчет»**.\n"
+        "Она всегда доступна в этом чате.",
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
 
 @dp.message(lambda m: m.web_app_data is not None)
 async def handle_webapp_data(message: Message):
@@ -254,7 +288,7 @@ async def process_web_check(message: Message, data: dict, user_id: int):
     target_info = data.get("target_user_id") or user_id
     action = data["action"]
 
-    status_msg = await message.answer("⌛ Обработка...", reply_markup=ReplyKeyboardRemove())
+    status_msg = await message.answer("⌛ Обработка...")
     
     photo_url = None
     if image_data and image_data.startswith("http"):
@@ -300,30 +334,47 @@ async def process_web_check(message: Message, data: dict, user_id: int):
         submitter_obj = USER_CACHE_ID.get(str(user_id))
         submitted_by = submitter_obj["name"] if submitter_obj else f"ID:{user_id}"
 
-    # 4. Log to Sheets
+    # 4. Log to Sheets with Team Routing
     log_type = "Приход" if action == "check_in" else "Уход"
     try:
+        # Determine team for routing
+        target_user = USER_CACHE_ID.get(str(target_tg_id))
+        team = target_user["team"] if target_user else "Цех"
+        dept = target_user["department"] if target_user else ""
+        
         sheet_manager.append_log(
             user_name=employee_name,
             telegram_id=target_tg_id,
             log_type=log_type,
             photo_url=photo_url,
-            submitted_by=submitted_by
+            submitted_by=submitted_by,
+            team=team
         )
     except Exception as log_err:
         logger.error(f"Append log failed: {log_err}")
         await message.answer("⚠️ Ошибка записи в таблицу, но я попробую отправить фото.")
 
-    # 5. Notify Group/User
+    # 5. Notify Group/User with Routing and Hashtags
     time_str = sheet_manager._get_moscow_time().strftime('%H:%M')
     status_emoji = "🟢" if action == "check_in" else "🔴"
     status_text = "НАЧАЛ РАБОТУ" if action == "check_in" else "ЗАКОНЧИЛ РАБОТУ"
     
-    caption = f"{status_emoji} **{employee_name}** {status_text}\n🕒 {time_str}"
+    # Add Hashtags for Office team
+    hashtag = ""
+    target_user = USER_CACHE_ID.get(str(target_tg_id))
+    user_team = target_user["team"] if target_user else "Цех"
+    if user_team == "Офис":
+        dept = target_user.get("department", "")
+        if dept:
+            hashtag = f" #{dept.strip().lower().replace(' ', '_')}"
+            
+    caption = f"{status_emoji} **{employee_name}** {status_text}{hashtag}\n🕒 {time_str}"
     if submitted_by:
         caption += f"\n✅ Подтверждено бригадиром: {submitted_by}"
     
-    target_chat = data.get("group_id") or message.chat.id
+    # Routing determine target chat
+    env_suffix = "WORKSHOP" if user_team == "Цех" else "OFFICE"
+    target_chat = os.getenv(f"{env_suffix}_GROUP_ID") or data.get("group_id") or message.chat.id
     photo_filename = data.get("photo_filename")
     
     try:
@@ -354,23 +405,46 @@ async def process_web_claim(message: Message, data: dict, user_id: int):
         await message.answer(
             f"✅ Аккаунт успешно привязан к: **{selected_name}**", 
             parse_mode="Markdown",
-            reply_markup=ReplyKeyboardRemove()
+            reply_markup=get_main_keyboard(user_id, message.chat.id)
         )
         logger.info(f"User {user_id} claimed {selected_name}")
     else:
-        await message.answer("❌ Ошибка привязки аккаунта.", reply_markup=ReplyKeyboardRemove())
+        await message.answer("❌ Ошибка привязки аккаунта.", reply_markup=get_main_keyboard(user_id, message.chat.id))
     
 
 
-# Handler for all other text messages
-@dp.message(F.text)
+@dp.message(Command("id"))
+async def handle_id_command(message: Message):
+    """Returns the current chat ID."""
+    chat_type = message.chat.type
+    await message.answer(
+        f"🆔 **ID этого чата:** `{message.chat.id}`\n"
+        f"👤 **Ваш ID:** `{message.from_user.id}`\n"
+        f"Тип чата: {chat_type}",
+        parse_mode="Markdown"
+    )
+    logger.info(f"ID Request: Chat:{message.chat.id}, User:{message.from_user.id}")
+
+@dp.my_chat_member()
+async def on_bot_added(event: ChatMemberUpdated):
+    """Triggered when bot is added to a group."""
+    if event.new_chat_member.status in ["member", "administrator"]:
+        await bot.send_message(
+            event.chat.id, 
+            f"👋 Привет! Я добавлен в эту группу.\n🆔 **ID этой группы:** `{event.chat.id}`\n"
+            "Скопируйте этот ID и вставьте его в .env файл.",
+            parse_mode="Markdown"
+        )
+
+# Handler for all other text messages (Private chats only)
+@dp.message(F.chat.type == "private", F.text)
 async def handle_text(message: Message):
     # Only reply if it's not a command (usually handled by other handlers)
     if message.text.startswith("/"):
         return
     await message.reply("Пожалуйста, отправьте фото, чтобы отметиться, или используйте кнопку в меню.")
 
-@dp.message()
+@dp.message(F.chat.type == "private")
 async def handle_fallback(message: Message):
     logger.warning(f"FALLBACK: Unhandled message from {message.from_user.id}. Type: {message.content_type}")
     if message.web_app_data:

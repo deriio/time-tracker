@@ -100,15 +100,15 @@ async def get_config(request: Request):
         
         users_v2 = sheet_manager.get_users_v2()
         
-        # 1. Compact Active Users: [id, name, role_char]
+        # 1. Compact Active Users: [id, name, role_char, team, department]
         active_users = []
         for u in users_v2:
             if u["status"] == "active":
                 tid = str(u["tg_id"]) if u["tg_id"] else ""
                 role_char = "s" if u["role"] == "supervisor" else "e"
-                active_users.append([tid, u["name"], role_char])
+                active_users.append([tid, u["name"], role_char, u.get("team", "Цех"), u.get("department", "")])
         
-        # 2. Orphans: Names without IDs
+        # 2. Orphans: Names without IDs (needed for the claim screen)
         orphan_names = [u["name"] for u in users_v2 if not u["tg_id"] and u["status"] == "active"]
         
         return {
@@ -209,34 +209,34 @@ async def handle_checkin(request: Request):
         # 1. Fetch user records for identification
         users = sheet_manager.get_users_v2()
         
-        # 2. Identify Target Employee
+        # 2. Identify Target Employee & Team Info
         final_employee_name = None
         target_tg_id = None
+        user_team = "Цех" # Default
+        user_dept = ""
         
         if target_info:
             # Supervisor mode: target_info is the Name of the employee selected
             final_employee_name = target_info
-            # Try to find target's TG ID
             t_user = next((u for u in users if u["name"] == final_employee_name), None)
-            target_tg_id = t_user["tg_id"] if t_user else ""
+            if t_user:
+                target_tg_id = t_user["tg_id"]
+                user_team = t_user.get("team", "Цех")
+                user_dept = t_user.get("department", "")
         else:
             # Self mode: Prioritize ID lookup
             u_user = next((u for u in users if str(u["tg_id"]) == user_id), None)
             if u_user:
                 final_employee_name = u_user["name"]
                 target_tg_id = user_id
+                user_team = u_user.get("team", "Цех")
+                user_dept = u_user.get("department", "")
             else:
-                # Fallback to name from request (only for fresh claims)
+                # Fallback to name from request
                 final_employee_name = employee_name or "Сотрудник"
                 target_tg_id = user_id
 
-        if not final_employee_name or final_employee_name == "Сотрудник":
-             # Last resort deep lookup
-             found = sheet_manager.find_user(tg_id=user_id)
-             if found:
-                 final_employee_name = found["name"]
-
-        # 3. Identify Submitter (Submitted By)
+        # 3. Identify Submitter
         submitted_by = ""
         if target_info:
             s_user = next((u for u in users if str(u["tg_id"]) == user_id), None)
@@ -250,26 +250,44 @@ async def handle_checkin(request: Request):
                 telegram_id=target_tg_id or user_id,
                 log_type=log_type,
                 photo_url="-",
-                submitted_by=submitted_by
+                submitted_by=submitted_by,
+                team=user_team
             )
         except Exception as e_sheet:
             logger.error(f"Sheet log failed: {e_sheet}")
 
-        # 5. Send Report to Telegram
+        # 5. Route Report to Correct Telegram Group
         from datetime import datetime
         now_time = datetime.now().strftime("%H:%M")
         status_emoji = "🟢" if action == "check_in" else "🔴"
         status_text = "НАЧАЛ РАБОТУ" if action == "check_in" else "ЗАКОНЧИЛ РАБОТУ"
         
-        caption = f"{status_emoji} **{final_employee_name}** {status_text}\n🕒 Время: {now_time}"
+        # Add Hashtags for Office team
+        hashtag = ""
+        if user_team == "Офис" and user_dept:
+            clean_dept = user_dept.strip().lower().replace(" ", "_")
+            hashtag = f" #{clean_dept}"
+        
+        caption = f"{status_emoji} **{final_employee_name}** {status_text}{hashtag}\n🕒 Время: {now_time}"
         if submitted_by:
             caption += f"\n✅ Подтвердил бригадир: {submitted_by}"
+
+        # Determine target group ID from .env
+        team_lower = str(user_team).lower().strip()
+        env_suffix = "WORKSHOP" if team_lower == "цех" else "OFFICE"
+        
+        env_var_name = f"{env_suffix}_GROUP_ID"
+        env_group_id = os.getenv(env_var_name)
+        target_group = env_group_id or group_id or user_id
+        
+        logger.info(f"Routing debug: team='{user_team}', lower='{team_lower}', env_var='{env_var_name}', env_val='{env_group_id}', final_target='{target_group}'")
+
 
         async with httpx.AsyncClient() as client:
             photo_bytes = base64.b64decode(photo_b64)
             files = {'photo': ('photo.jpg', photo_bytes, 'image/jpeg')}
             payload = {
-                'chat_id': group_id or user_id, 
+                'chat_id': target_group, 
                 'caption': caption,
                 'parse_mode': 'Markdown'
             }

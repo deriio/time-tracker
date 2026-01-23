@@ -71,25 +71,33 @@ class GoogleSheetManager:
     def get_users_v2(self):
         """
         Reads users from Config_Users with columns:
-        A: Name, B: Username, C: Telegram ID, D: Role, E: Status
+        A: Name, B: Username, C: Telegram ID, D: Role, E: Team, F: Department, G: Status
+        Actually headers say: 
+        1: Name, 2: Username, 3: ID, 4: Role, 5: Team, 6: Department
+        Let's assume G is status or we use Role/Department to deduce. 
+        User said status is after. Let's read A:G.
         """
         import time
         for attempt in range(3):
             try:
                 sheet = self.gc.open_by_key(self.template_file_id)
                 wks = sheet.worksheet("Config_Users")
-                raw_values = wks.get("A2:E")
+                # Reading A2:H to be safe and get all columns
+                raw_values = wks.get("A2:H")
                 if not raw_values: return []
                 
                 users = []
                 for row in raw_values:
                     if len(row) >= 1 and row[0].strip():
+                        name = row[0].strip()
                         users.append({
-                            "name": row[0].strip(),
+                            "name": name,
                             "username": self.normalize_username(row[1]) if len(row) > 1 else "",
                             "tg_id": str(row[2]).strip() if len(row) > 2 else "",
                             "role": row[3].strip().lower() if len(row) > 3 else "employee",
-                            "status": row[4].strip().lower() if len(row) > 4 else "active"
+                            "team": row[4].strip() if len(row) > 4 else "Цех", # Default to CEH
+                            "department": row[5].strip() if len(row) > 5 else "",
+                            "status": row[6].strip().lower() if len(row) > 6 else "active"
                         })
                 return users
             except Exception as e:
@@ -142,6 +150,8 @@ class GoogleSheetManager:
                         "username": row_username,
                         "tg_id": str(tg_id),
                         "role": row[3].strip().lower() if len(row) > 3 else "employee",
+                        "team": row[4].strip() if len(row) > 4 else "Цех",
+                        "department": row[5].strip() if len(row) > 5 else "",
                         "status": "active"
                     }
             return None
@@ -210,45 +220,39 @@ class GoogleSheetManager:
             logger.error(f"Failed to load users from template: {e}")
             raise e
 
-    def sync_users_to_current_month(self, raw_values):
+    def sync_users_to_current_month(self, users_list=None):
         """
-        Updates the 'Config_Users' tab in the CURRENT month's sheet.
+        Updates the 'Config_Users' tab in the CURRENT month's sheets for both teams.
         """
         try:
             now = self._get_moscow_time()
             target_name = self._get_sheet_name(now)
             
-            # Use cached sheet key if valid
-            sheet = None
-            if self._current_sheet_key and self._current_sheet_month == target_name:
-                try:
-                    sheet = self.gc.open_by_key(self._current_sheet_key)
-                except:
-                    pass
+            # Map of team (normalized) -> folder_id
+            teams_mapping = {
+                "цех": os.getenv("WORKSHOP_FOLDER_ID"),
+                "офис": os.getenv("OFFICE_FOLDER_ID")
+            }
             
-            if not sheet:
-                # Search
-                query = f"name = '{target_name}' and '{self.drive_folder_id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false"
+            summary = []
+            for team_key, folder_id in teams_mapping.items():
+                if not folder_id: continue
+                
+                # Search sheet in specific folder
+                query = f"name = '{target_name}' and '{folder_id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false"
                 results = self.drive_service.files().list(q=query, fields="files(id, name)").execute()
                 items = results.get('files', [])
+                
                 if items:
                     file_id = items[0]['id']
-                    sheet = self.gc.open_by_key(file_id)
-                    # update cache
-                    self._current_sheet_key = file_id
-                    self._current_sheet_month = target_name
+                    if self._filter_sheet_users(file_id, team_key):
+                        summary.append(f"{team_key}: Synced successfully.")
+                    else:
+                        summary.append(f"{team_key}: Sync failed.")
                 else:
-                    return "Current month sheet does not exist. No sync needed."
-
-            # Perform Sync
-            wks = sheet.worksheet("Config_Users")
-            # Clear old data A2:B
-            wks.batch_clear(["A2:B"])
-            # Update with new data
-            if raw_values:
-                wks.update("A2", raw_values, value_input_option="USER_ENTERED")
+                    summary.append(f"{team_key}: Sheet not found.")
             
-            return f"Synced {len(raw_values)} users to {target_name}."
+            return " | ".join(summary)
 
         except Exception as e:
             logger.error(f"Failed to sync users: {e}")
@@ -283,12 +287,16 @@ class GoogleSheetManager:
             logger.error(f"Failed to add user: {e}")
             return False
 
-    def add_user_to_current_month(self, full_name):
-        """Adds a row for a new user in the current month's report sheet if it exists."""
+    def add_user_to_current_month(self, full_name, team):
+        """Adds a row for a new user in the specific team's report sheet."""
         now = self._get_moscow_time()
         target_name = self._get_sheet_name(now)
+        folder_id = os.getenv("WORKSHOP_FOLDER_ID") if team == "Цех" else os.getenv("OFFICE_FOLDER_ID")
+        
+        if not folder_id: return False
+        
         try:
-            query = f"name = '{target_name}' and '{self.drive_folder_id}' in parents and trashed = false"
+            query = f"name = '{target_name}' and '{folder_id}' in parents and trashed = false"
             results = self.drive_service.files().list(q=query, fields="files(id)").execute()
             items = results.get('files', [])
             if not items: return False
@@ -297,20 +305,16 @@ class GoogleSheetManager:
             sheet = self.gc.open_by_key(sheet_id)
             wks = sheet.worksheet("Отчет_Месяц")
             
-            # Find the last row with a name in Column A
             names = wks.col_values(1)
             last_row = len(names)
+            if last_row < 3: return False
             
-            if last_row < 3: return False # Header is 1-2
-            
-            # Copy formatting and formulas from the last existing employee row
-            # Range structure from structure.js: A:DM
             next_row = last_row + 1
             wks.copy_range(f"A{last_row}:DM{last_row}", f"A{next_row}:DM{next_row}")
             wks.update_acell(f"A{next_row}", full_name)
             return True
         except Exception as e:
-            logger.error(f"Failed to add user to month: {e}")
+            logger.error(f"Failed to add user to {team} month: {e}")
             return False
 
 
@@ -380,48 +384,73 @@ class GoogleSheetManager:
         except Exception as e:
             logger.error(f"Failed to update headers: {e}")
 
-    def check_or_create_monthly_sheet(self):
+    def _filter_sheet_users(self, file_id, team_name):
+        """Processes a specific sheet to only contain active users of a certain team."""
+        try:
+            users_list = self.get_users_v2()
+            
+            # 1. Filter active users for this specific team
+            team_key = str(team_name).lower().strip()
+            team_users = [u for u in users_list if str(u.get("team", "")).lower().strip() == team_key and u.get("status") == "active"]
+            
+            # Format: [Name, @Username]
+            raw_rows = []
+            for u in team_users:
+                username = u.get("username", "")
+                if username and not username.startswith("@"):
+                    username = "@" + username
+                raw_rows.append([u["name"], username])
+
+            # 2. Update the Config_Users worksheet in the TARGET spreadsheet
+            sheet = self.gc.open_by_key(file_id)
+            wks = sheet.worksheet("Config_Users")
+            
+            # Clear existing data (A2:B contains name and username)
+            wks.batch_clear(["A2:B100"]) # Clearing up to 100 rows to be safe
+            
+            if raw_rows:
+                wks.update("A2", raw_rows, value_input_option="USER_ENTERED")
+            
+            logger.info(f"Team Filter Applied: {team_name} now has {len(raw_rows)} users in {file_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to filter users for team {team_name} in sheet {file_id}: {e}")
+            return False
+
+    def check_or_create_monthly_sheet(self, team="Цех"):
         """
-        Checks if the sheet for the current month exists in the target folder.
+        Checks if the sheet for the current month exists in the specific department folder.
         If not, copies the template and renames it.
-        Handles storageQuotaExceeded by falling back to manual sheet creation.
         """
         now = self._get_moscow_time()
         target_name = self._get_sheet_name(now)
         
-        # Check cache
-        if self._current_sheet_key and self._current_sheet_month == target_name:
-            try:
-                self.gc.open_by_key(self._current_sheet_key)
-                return 
-            except:
-                self._current_sheet_key = None
+        team_norm = str(team).lower().strip()
+        folder_id = os.getenv("WORKSHOP_FOLDER_ID") if team_norm == "цех" else os.getenv("OFFICE_FOLDER_ID")
+        
+        if not folder_id:
+            logger.error(f"Missing folder ID for team: {team}")
+            return None
 
         try:
-            # Search for existing sheet
-            query = f"name = '{target_name}' and '{self.drive_folder_id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false"
+            # Search for existing sheet in the SPECIFIC folder
+            query = f"name = '{target_name}' and '{folder_id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false"
             results = self.drive_service.files().list(q=query, fields="files(id, name)").execute()
             items = results.get('files', [])
 
             if items:
-                self._current_sheet_key = items[0]['id']
-                self._current_sheet_month = target_name
-                logger.info(f"Found existing sheet: {target_name} ({items[0]['id']})")
-                
-                # OPTIONAL: Force update headers even for existing sheets? 
-                # For now, let's do it to fix the User's current problem automatically!
-                self.update_sheet_headers(self._current_sheet_key, now)
-                return
+                file_id = items[0]['id']
+                logger.info(f"Found existing sheet for {team}: {target_name}")
+                self.update_sheet_headers(file_id, now)
+                self._filter_sheet_users(file_id, team)
+                return file_id
 
-            logger.info(f"Sheet {target_name} not found. Creating from template...")
+            logger.info(f"Sheet {target_name} not found for {team}. Creating from template...")
             new_file_id = None
             
             # Method A: Standard Copy
             try:
-                file_metadata = {
-                    'name': target_name,
-                    'parents': [self.drive_folder_id]
-                }
+                file_metadata = {'name': target_name, 'parents': [folder_id]}
                 file = self.drive_service.files().copy(
                     fileId=self.template_file_id,
                     body=file_metadata,
@@ -431,48 +460,34 @@ class GoogleSheetManager:
                 
             except Exception as e:
                 if "storageQuotaExceeded" in str(e):
-                    logger.warning("Quota limit hit on file copy. Applying Fallback: Manual Create & Copy.")
-                    new_file_id = self._create_sheet_fallback(target_name)
-                    if not new_file_id:
-                        raise e 
+                    logger.warning(f"Quota limit hit on file copy for {team}. Applying Fallback.")
+                    new_file_id = self._create_sheet_fallback(target_name, folder_id)
                 else:
                     raise e
             
             if new_file_id:
-                self._current_sheet_key = new_file_id
-                self._current_sheet_month = target_name
-                logger.info(f"Successfully created monthly sheet: {target_name}")
-
-                try:
-                    # 1. Update Headers
-                    self.update_sheet_headers(new_file_id, now)
-                    
-                    # 2. Sync Users
-                    users, raw, _ = self.get_users_from_template()
-                    self.sync_users_to_current_month(raw)
-                    
-                except Exception as sync_err:
-                     logger.error(f"Post-creation updates failed: {sync_err}")
+                self.update_sheet_headers(new_file_id, now)
+                self._filter_sheet_users(new_file_id, team)
+                return new_file_id
 
         except Exception as e:
-            logger.error(f"An error occurred with Google Drive API: {e}")
-            raise e
+            logger.error(f"Error checking/creating sheet for {team}: {e}")
+            return None
 
-    def _create_sheet_fallback(self, target_name):
+    def _create_sheet_fallback(self, target_name, folder_id):
         """
         Fallback: Create empty sheet -> Copy tabs from Template -> Delete default tab.
-        This uses Sheets API quota (Docs) instead of Drive Storage quota.
         """
         try:
-            # 1. Create native sheet
-            sh = self.gc.create(target_name, folder_id=self.drive_folder_id)
+            # 1. Create native sheet in specific folder
+            sh = self.gc.create(target_name, folder_id=folder_id)
             template = self.gc.open_by_key(self.template_file_id)
             
             # 2. Copy Worksheets
             for ws in template.worksheets():
                 ws.copy_to(sh.id)
             
-            # 3. Reload to rename sheets (copied sheets are named "Copy of X")
+            # 3. Reload to rename sheets
             sh = self.gc.open_by_key(sh.id)
             for ws in sh.worksheets():
                 if ws.title.startswith("Copy of "):
@@ -480,7 +495,7 @@ class GoogleSheetManager:
                     try:
                         ws.update_title(original_name)
                     except:
-                        pass # Ignore if name exists
+                        pass 
             
             # 4. Delete default Sheet1
             try:
@@ -496,17 +511,19 @@ class GoogleSheetManager:
             return None
 
     def append_log(self, user_name: str, telegram_id: int, log_type: str = "Log", 
-                   photo_url: str = "", submitted_by: str = ""):
+                   photo_url: str = "", submitted_by: str = "", team="Цех"):
         """
-        Appends a log entry to the current month's sheet.
+        Appends a log entry to the current month's sheet of the SPECIFIC team.
         """
         now = self._get_moscow_time()
         
-        # Ensure sheet exists
-        self.check_or_create_monthly_sheet()
+        # Ensure sheet exists for this team
+        file_id = self.check_or_create_monthly_sheet(team)
+        if not file_id:
+            raise Exception(f"Could not find or create sheet for team {team}")
         
         try:
-            sheet = self.gc.open_by_key(self._current_sheet_key)
+            sheet = self.gc.open_by_key(file_id)
             wks = sheet.worksheet("DB_Logs")
             
             # MANUAL ROW CALCULATION TO PREVENT SHIFTS

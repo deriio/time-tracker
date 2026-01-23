@@ -15,6 +15,8 @@ const state = {
     targetUserId: null,
     groupId: null,
     employeeName: null,
+    team: null,
+    department: null,
     apiUrl: null
 };
 
@@ -71,6 +73,8 @@ async function init(retryCount = 0) {
         if (me) {
             state.employeeName = me[1];
             state.role = (me[2] === 's') ? 'supervisor' : 'employee';
+            state.team = me[3];
+            state.department = me[4];
             state.employeeList = users.map(u => u[1]);
         } else {
             state.role = "orphan";
@@ -90,7 +94,9 @@ function updateDebugFooter() {
         footer.style = "position:fixed;bottom:2px;left:0;width:100%;text-align:center;font-size:9px;color:rgba(255,255,255,0.15);pointer-events:none;z-index:9999;font-family:monospace;";
         document.body.appendChild(footer);
     }
-    footer.innerText = `ID: ${state.user.id || 'N/A'} | SDK: ${tg.version} | ${new Date().toLocaleTimeString()}`;
+    const teamInfo = state.team ? ` | ${state.team}` : "";
+    const deptInfo = state.department ? ` (${state.department})` : "";
+    footer.innerText = `ID: ${state.user.id || 'N/A'}${teamInfo}${deptInfo} | SDK: ${tg.version} | ${new Date().toLocaleTimeString()}`;
 }
 
 function initUnauthorizedScreen() {
@@ -246,7 +252,10 @@ function initOrphanScreen() {
 // EMPLOYEE SCREEN
 function initEmployeeScreen() {
     const greeting = document.getElementById("greeting");
-    if (greeting) greeting.textContent = `Здравствуйте!`; // Simplified as requested
+    if (greeting) {
+        const deptInfo = state.department ? ` (${state.department})` : "";
+        greeting.textContent = `${state.employeeName}${deptInfo}`;
+    }
 
     setupCamera("camera-input", "photo-preview", "camera-placeholder", "btn-snap", "btn-retake", () => {
         document.getElementById("btn-check-in").disabled = false;
