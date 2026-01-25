@@ -1,0 +1,35 @@
+[Unit]
+Description=Time Tracker Telegram Bot
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=botuser
+Group=botuser
+WorkingDirectory=/home/botuser/time-tracker
+
+# Environment
+Environment="PATH=/home/botuser/time-tracker/venv/bin:/usr/bin"
+EnvironmentFile=/home/botuser/time-tracker/.env
+
+# Execution
+ExecStart=/home/botuser/time-tracker/venv/bin/python main.py
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=200
+StartLimitBurst=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=timetracker-bot
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,40 @@
+[Unit]
+Description=Time Tracker Webhook Server (FastAPI)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=botuser
+Group=botuser
+WorkingDirectory=/home/botuser/time-tracker
+
+# Environment
+Environment="PATH=/home/botuser/time-tracker/venv/bin:/usr/bin"
+EnvironmentFile=/home/botuser/time-tracker/.env
+
+# Execution (Production settings)
+ExecStart=/home/botuser/time-tracker/venv/bin/uvicorn webhook_server:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 2 \
+    --log-level info \
+    --no-access-log
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=200
+StartLimitBurst=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=timetracker-webhook
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

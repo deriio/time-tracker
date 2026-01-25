@@ -4,7 +4,9 @@ import base64
 import logging
 import httpx
 import uuid
+import asyncio
 from pathlib import Path
+from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -27,6 +29,10 @@ logger = logging.getLogger("webhook_server")
 # Create photos directory if it doesn't exist
 PHOTOS_DIR = Path("photos")
 PHOTOS_DIR.mkdir(exist_ok=True)
+
+# Photo cleanup configuration
+PHOTO_TTL_MINUTES = 5
+CLEANUP_INTERVAL_SECONDS = 60  # Run every 60 seconds
 
 import hmac
 import hashlib
@@ -89,6 +95,39 @@ sheet_manager = GoogleSheetManager(
     drive_folder_id=DRIVE_FOLDER_ID,
     template_file_id=TEMPLATE_FILE_ID
 )
+
+# --- Background Photo Cleanup Task ---
+async def cleanup_old_photos():
+    """Background task to delete photos older than TTL."""
+    while True:
+        try:
+            now = datetime.now()
+            cutoff = now - timedelta(minutes=PHOTO_TTL_MINUTES)
+            
+            deleted_count = 0
+            for photo_path in PHOTOS_DIR.glob("*.jpg"):
+                # Get file modification time
+                mtime = datetime.fromtimestamp(photo_path.stat().st_mtime)
+                
+                if mtime < cutoff:
+                    photo_path.unlink()
+                    deleted_count += 1
+                    logger.debug(f"Auto-deleted expired photo: {photo_path.name}")
+            
+            if deleted_count > 0:
+                logger.info(f"Cleanup cycle: Removed {deleted_count} expired photo(s)")
+                
+        except Exception as e:
+            logger.error(f"Photo cleanup error: {e}")
+        
+        await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks on server startup."""
+    asyncio.create_task(cleanup_old_photos())
+    logger.info(f"Photo cleanup task started (TTL: {PHOTO_TTL_MINUTES} min, interval: {CLEANUP_INTERVAL_SECONDS}s)")
+
 
 @app.get("/api/config")
 async def get_config(request: Request):

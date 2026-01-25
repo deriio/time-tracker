@@ -382,10 +382,20 @@ async def process_web_check(message: Message, data: dict, user_id: int):
         if str(target_chat) != str(message.chat.id):
             await message.answer("✅ Отчет успешно отправлен в группу.")
         
-        # Cleanup server storage
+        # ✅ IMMEDIATE CLEANUP: Delete photo from server after successful send
         if photo_filename and WEBHOOK_SERVER_URL:
             async with httpx.AsyncClient() as client:
-                await client.delete(f"{WEBHOOK_SERVER_URL.rstrip('/')}/api/photos/{photo_filename}", timeout=5.0)
+                try:
+                    delete_resp = await client.delete(
+                        f"{WEBHOOK_SERVER_URL.rstrip('/')}/api/photos/{photo_filename}",
+                        timeout=5.0
+                    )
+                    if delete_resp.status_code == 200:
+                        logger.info(f"Photo cleaned up immediately: {photo_filename}")
+                    else:
+                        logger.warning(f"Photo cleanup failed (will be auto-deleted by TTL): {photo_filename}")
+                except Exception as e_cleanup:
+                    logger.warning(f"Failed to delete photo {photo_filename}: {e_cleanup} (will be auto-deleted by TTL)")
     except Exception as e_photo:
         logger.error(f"Report delivery failed: {e_photo}")
         await message.answer(caption + "\n⚠️ (Ошибка отправки в группу)", parse_mode="Markdown")

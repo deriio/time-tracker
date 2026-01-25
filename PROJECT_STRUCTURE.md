@@ -64,8 +64,20 @@ Telegram бот для учета рабочего времени сотрудн
 
 ---
 
-### **Конфигурация**
+### **Конфигурация и Деплой**
 
+#### Папка `deploy/`:
+- **`.env.production.template`** - Шаблон конфига для VPS
+- **`nginx/`** - Конфигурация Nginx
+- **`systemd/`** - Сервисные файлы для автозапуска
+  - `timetracker-bot.service`
+  - `timetracker-webhook.service`
+- **`scripts/`** - Скрипты автоматизации
+  - `deploy.sh` - Полный деплой
+  - `healthcheck.sh` - Мониторинг
+  - `backup.sh` - Бэкапы
+
+#### Корневые конфиги:
 - **`.env`** - Переменные окружения (НЕ в git!)
   ```
   BOT_TOKEN=...
@@ -78,25 +90,17 @@ Telegram бот для учета рабочего времени сотрудн
   ```
 
 - **`.env.example`** - Пример конфигурации
-
 - **`requirements.txt`** - Python зависимости
-  ```
-  aiogram
-  python-dotenv
-  google-api-python-client
-  google-auth-httplib2
-  google-auth-oauthlib
-  ```
 
 ---
 
 ### **Документация**
 
-- **`README.md`** / **`README_RU.md`** - Основная документация
-- **`DEPLOYMENT_GUIDE_RU.md`** - Инструкция по деплою
-- **`OAUTH_SETUP_GUIDE.md`** - Настройка OAuth для Google
-- **`USER_INSTRUCTIONS.md`** - Инструкции для пользователей
-- **`IMPLEMENTATION_PLAN.md`** - План реализации функционала
+- **`README.md`** - Основная документация
+- **`deploy/README.md`** - Полное руководство по VPS
+- **`MIGRATION.md`** - Гайд по миграции Cloudflare -> VPS
+- **`ARCHITECTURE.md`** - Архитектура системы
+- **`CHANGELOG_VPS_MIGRATION.md`** - История изменений VPS
 - **`PROJECT_STRUCTURE.md`** - Этот файл
 
 ---
@@ -104,20 +108,20 @@ Telegram бот для учета рабочего времени сотрудн
 ### **Данные**
 
 #### Google API Credentials (НЕ в git!):
-- `credentials.json` / `oauth_credentials.json` - OAuth Client Secret
-- `token.json` - Сгенерированный access token
-- `timetrackingbot-*.json` - Service Account credentials
-- `serious-cabinet-*.json` - Дополнительные credentials
+- `credentials.json`
+- `token.json`
+- `oauth_credentials.json`
 
 #### Локальные данные:
 - `users.json` - Кеш пользователей (legacy)
-- `example.xlsx` - Пример Excel таблицы
+- `photos/` - Временное хранилище фото (автоочистка 5 мин)
 
 ---
 
 ### **Служебные папки**
 
-- **`photos/`** - Временное хранилище фото (очищается автоматически)
+- **`photos/`** - Временное хранилище фото
+  - `.gitkeep` - Для трекинга папки
 - **`__pycache__/`** - Python кеш (игнорируется git)
 - **`.git/`** - Git репозиторий
 
@@ -138,8 +142,9 @@ main.py → GoogleSheetManager → Загрузка пользователей
 ### 3. **Check-in/Check-out через WebApp**
 ```
 app.js → Камера → Фото Base64 → webhook_server.py →
- ┌─→ Логирование в Google Sheets
- └─→ Отправка фото в группу Telegram
+ ┌─→ Сохранение в photos/ (TTL 5 мин)
+ ├─→ Логирование в Google Sheets
+ └─→ Отправка фото в группу Telegram → Удаление фото
 ```
 
 ### 4. **Привязка аккаунта (Claim)**
