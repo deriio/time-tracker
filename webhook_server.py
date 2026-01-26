@@ -303,14 +303,21 @@ async def handle_checkin(request: Request):
         
         # Add Hashtags for Office team (Robust check)
         hashtag = ""
-        if str(user_team).strip().lower() == "офис" and user_dept:
-            import re
-            clean_dept = str(user_dept).strip().lower().replace(" ", "_")
-            # Remove any characters that are not letters, digits or underscores
-            clean_dept = re.sub(r'[^а-яёa-z0-9_]', '', clean_dept)
-            if clean_dept:
-                hashtag = f" #{clean_dept}"
-                logger.info(f"Hashtag generated: {hashtag} for {final_employee_name}")
+        if str(user_team).strip().lower() == "офис":
+            # 1. Action hashtag
+            action_tag = " #приход" if action == "check_in" else " #уход"
+            hashtag += action_tag
+
+            # 2. Department hashtag
+            if user_dept:
+                import re
+                clean_dept = str(user_dept).strip().lower().replace(" ", "_")
+                # Remove any characters that are not letters, digits or underscores
+                clean_dept = re.sub(r'[^а-яёa-z0-9_]', '', clean_dept)
+                if clean_dept:
+                    hashtag += f" #{clean_dept}"
+            
+            logger.info(f"Hashtags generated: {hashtag} for {final_employee_name}")
         
         caption = f"{status_emoji} **{final_employee_name}** {status_text}{hashtag}\n🕒 Время: {now_time}"
         if submitted_by:
