@@ -337,9 +337,7 @@ async function openCameraModal(imgId, placeholderId, retakeId, onCapture) {
     try {
         currentStream = await navigator.mediaDevices.getUserMedia({
             video: {
-                facingMode: "environment",
-                width: { ideal: 1080 },
-                height: { ideal: 1920 }
+                facingMode: "environment"
             },
             audio: false
         });
