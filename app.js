@@ -75,7 +75,7 @@ async function init(retryCount = 0) {
             state.role = (me[2] === 's') ? 'supervisor' : 'employee';
             state.team = me[3];
             state.department = me[4];
-            state.employeeList = users.map(u => u[1]);
+            state.employeeList = users.filter(u => u[3] === 'Цех').map(u => u[1]);
         } else {
             state.role = "orphan";
         }
@@ -331,8 +331,8 @@ async function openCameraModal(imgId, placeholderId, retakeId, onCapture) {
         currentStream = await navigator.mediaDevices.getUserMedia({
             video: {
                 facingMode: "environment",
-                width: { ideal: 1080 }, // Slightly more compatible than 1280
-                height: { ideal: 1080 }
+                width: { ideal: 1920 },
+                height: { ideal: 1920 }
             },
             audio: false
         });
@@ -367,7 +367,7 @@ async function openCameraModal(imgId, placeholderId, retakeId, onCapture) {
         const ctx = canvas.getContext("2d");
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
         state.photoBase64 = dataUrl.split(",")[1];
 
         img.src = dataUrl;
