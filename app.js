@@ -72,10 +72,17 @@ async function init(retryCount = 0) {
 
         if (me) {
             state.employeeName = me[1];
-            state.role = (me[2] === 's') ? 'supervisor' : 'employee';
-            state.team = me[3];
-            state.department = me[4];
-            state.employeeList = users.filter(u => u[3] === 'Цех').map(u => u[1]);
+            state.team = me[3] || "";
+            state.department = me[4] || "";
+
+            // Supervisor only for Workshop (Цех) team
+            const isWorkshop = state.team.trim().toLowerCase() === "цех";
+            state.role = (me[2] === 's' && isWorkshop) ? 'supervisor' : 'employee';
+
+            // List only includes Workshop employees
+            state.employeeList = users
+                .filter(u => (u[3] || "").trim().toLowerCase() === "цех")
+                .map(u => u[1]);
         } else {
             state.role = "orphan";
         }
