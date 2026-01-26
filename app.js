@@ -324,19 +324,29 @@ async function openCameraModal(imgId, placeholderId, retakeId, onCapture) {
     const placeholder = document.getElementById(placeholderId);
     const retake = retakeId ? document.getElementById(retakeId) : null;
 
+    // Show modal immediately so user sees feedback
+    modal.style.display = "flex";
+
     try {
         currentStream = await navigator.mediaDevices.getUserMedia({
             video: {
                 facingMode: "environment",
-                width: { ideal: 1280 },
-                height: { ideal: 1280 }
+                width: { ideal: 1080 }, // Slightly more compatible than 1280
+                height: { ideal: 1080 }
             },
             audio: false
         });
+
         video.srcObject = currentStream;
-        modal.style.display = "flex";
+
+        // Critical for Android: wait for metadata and play
+        video.onloadedmetadata = () => {
+            video.play().catch(e => console.error("Auto-play failed:", e));
+        };
+
     } catch (err) {
         console.error("Camera Error:", err);
+        modal.style.display = "none";
         showToast("Ошибка камеры. Разрешите доступ в настройках Telegram.");
         return;
     }
