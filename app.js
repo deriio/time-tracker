@@ -305,19 +305,46 @@ function initSupervisorScreen() {
     btnOut.addEventListener("click", (e) => submitData("check_out", state.targetUserId, e.currentTarget));
 }
 
-// CAMERA HELPER (Pro WebRTC Solution)
+// detect iOS
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 let currentStream = null;
 
 async function setupCamera(inputId, imgId, placeholderId, btnId, retakeId, onCapture) {
     const btn = document.getElementById(btnId);
     if (!btn) return;
 
-    btn.addEventListener("click", () => openCameraModal(imgId, placeholderId, retakeId, onCapture));
+    if (isIOS) {
+        // iOS: Use native file input (silent, no repeated permissions)
+        const input = document.getElementById(inputId || (btnId === "btn-snap" ? "camera-input" : "camera-input-super"));
+        if (!input) return;
 
-    // Also bind retake button if exists
-    const retake = retakeId ? document.getElementById(retakeId) : null;
-    if (retake) {
-        retake.addEventListener("click", () => openCameraModal(imgId, placeholderId, retakeId, onCapture));
+        btn.onclick = () => input.click();
+        const retake = retakeId ? document.getElementById(retakeId) : null;
+        if (retake) retake.onclick = () => input.click();
+
+        input.onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                state.photoBase64 = event.target.result.split(",")[1];
+                const img = document.getElementById(imgId);
+                const placeholder = document.getElementById(placeholderId);
+                img.src = event.target.result;
+                img.style.display = "block";
+                placeholder.style.display = "none";
+                if (retake) retake.style.display = "inline-block";
+                if (onCapture) onCapture();
+            };
+            reader.readAsDataURL(file);
+        };
+    } else {
+        // Android: Use custom Camera Modal (Live stream to block gallery)
+        btn.addEventListener("click", () => openCameraModal(imgId, placeholderId, retakeId, onCapture));
+        const retake = retakeId ? document.getElementById(retakeId) : null;
+        if (retake) {
+            retake.addEventListener("click", () => openCameraModal(imgId, placeholderId, retakeId, onCapture));
+        }
     }
 }
 
