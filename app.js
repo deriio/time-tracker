@@ -306,7 +306,7 @@ function initSupervisorScreen() {
     btnOut.addEventListener("click", (e) => submitData("check_out", state.targetUserId, e.currentTarget));
 }
 
-// CAMERA HELPER
+// CAMERA HELPER with Compression
 function setupCamera(inputId, imgId, placeholderId, btnId, retakeId, onCapture) {
     const input = document.getElementById(inputId);
     const img = document.getElementById(imgId);
@@ -319,19 +319,76 @@ function setupCamera(inputId, imgId, placeholderId, btnId, retakeId, onCapture) 
     btn.addEventListener("click", () => input.click());
     if (retake) retake.addEventListener("click", () => input.click());
 
-    input.addEventListener("change", (e) => {
+    input.addEventListener("change", async (e) => {
         const file = e.target.files[0];
         if (!file) return;
 
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            state.photoBase64 = event.target.result.split(",")[1];
-            img.src = event.target.result;
+        // Visual Feedback: Start Loading
+        const originalBtnText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "⌛ Обработка...";
+        placeholder.innerHTML = '<div class="spinner"></div><p>Сжатие изображения...</p>';
+
+        try {
+            const compressedDataUrl = await compressImage(file);
+            state.photoBase64 = compressedDataUrl.split(",")[1];
+
+            img.src = compressedDataUrl;
             img.style.display = "block";
             placeholder.style.display = "none";
             if (retake) retake.style.display = "inline-block";
             if (onCapture) onCapture();
+        } catch (err) {
+            console.error("Compression error:", err);
+            showToast("Ошибка обработки фото");
+        } finally {
+            input.value = ""; // Reset input so change event fires even if same file is picked
+            btn.disabled = false;
+            btn.textContent = originalBtnText;
+            // Restore placeholder in case user wants to try again
+            if (img.style.display === "none") {
+                placeholder.innerHTML = '<span class="placeholder-icon">📸</span><p>Нажмите кнопку ниже,<br>чтобы сделать фото</p>';
+            }
+        }
+    });
+}
+
+// Helper: Client-side Image Compression
+async function compressImage(file, maxWidth = 1280, quality = 0.7) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement("canvas");
+                let width = img.width;
+                let height = img.height;
+
+                // Calculate aspect ratio
+                if (width > height) {
+                    if (width > maxWidth) {
+                        height = Math.round(height * (maxWidth / width));
+                        width = maxWidth;
+                    }
+                } else {
+                    if (height > maxWidth) {
+                        width = Math.round(width * (maxWidth / height));
+                        height = maxWidth;
+                    }
+                }
+
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(img, 0, 0, width, height);
+
+                // Convert to JPEG with quality reduction
+                resolve(canvas.toDataURL("image/jpeg", quality));
+            };
+            img.onerror = () => reject(new Error("Image load error"));
+            img.src = e.target.result;
         };
+        reader.onerror = () => reject(new Error("File read error"));
         reader.readAsDataURL(file);
     });
 }
