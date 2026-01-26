@@ -95,14 +95,26 @@
         </div>
     </template>
 
-    <!-- Dynamic Script Loading -->
-    <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        const ver = urlParams.get('v') || '1.0';
-        console.log("Loading app.js version:", ver);
+    <!-- Camera Modal (The Real Solution for Gallery Blocking) -->
+    <div id="camera-modal" class="camera-modal" style="display:none;">
+        <div class="camera-container">
+            <video id="video-feed" autoplay playsinline></video>
+            <canvas id="capture-canvas" style="display:none;"></canvas>
 
+            <div class="camera-controls">
+                <button id="btn-cancel-camera" class="btn-circle cancel">✕</button>
+                <button id="btn-take-shot" class="btn-circle capture">📸</button>
+            </div>
+
+            <div class="camera-hint">Только живое фото</div>
+        </div>
+    </div>
+
+    <!-- Dynamic Script Loading (Force Refresh) -->
+    <script>
         const script = document.createElement('script');
-        script.src = `app.js?v=${ver}`;
+        // Постоянно меняем URL, чтобы Telegram не кэшировал скрипт
+        script.src = `app.js?v=${new Date().getTime()}`;
         script.onerror = () => {
             document.getElementById('app').innerHTML = '<div class="screen"><h2>❌</h2><p>Ошибка загрузки логики. Проверьте интернет.</p></div>';
         };

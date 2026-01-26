@@ -149,7 +149,7 @@ async function sendData(data, btn = null) {
     try {
         const payload = {
             ...data,
-            _initData: state.initData, // Secure transmission in Body
+            _initData: state.initData,
             user_id: state.user.id,
             group_id: state.groupId,
             username: state.user.username || "Unknown"
@@ -158,8 +158,6 @@ async function sendData(data, btn = null) {
         if (!state.apiUrl) throw new Error("API URL missing");
 
         const claimApiUrl = state.apiUrl.replace("/api/checkin", "/api/claim");
-        console.log("Binding account via:", claimApiUrl);
-
         const response = await fetch(claimApiUrl, {
             method: 'POST',
             headers: {
@@ -172,13 +170,9 @@ async function sendData(data, btn = null) {
         const result = await response.json();
 
         if (response.ok && result.ok) {
-            console.log("Bind success:", result);
-
-            // Standardize: ensure result.name is used to avoid undefined
             state.employeeName = result.name || data.full_name;
             state.role = (result.role === 'supervisor') ? 'supervisor' : 'employee';
 
-            // Success Transition Overlay
             const overlay = document.createElement("div");
             overlay.className = "success-overlay";
             overlay.innerHTML = `
@@ -257,7 +251,7 @@ function initEmployeeScreen() {
         greeting.textContent = `${state.employeeName}${deptInfo}`;
     }
 
-    setupCamera("camera-input", "photo-preview", "camera-placeholder", "btn-snap", "btn-retake", () => {
+    setupCamera(null, "photo-preview", "camera-placeholder", "btn-snap", "btn-retake", () => {
         document.getElementById("btn-check-in").disabled = false;
         document.getElementById("btn-check-out").disabled = false;
     });
@@ -277,7 +271,6 @@ function initSupervisorScreen() {
     const btnIn = document.getElementById("btn-super-in");
     const btnOut = document.getElementById("btn-super-out");
 
-    // Clear and Fill selection
     select.innerHTML = '<option value="">-- Выберите сотрудника --</option>';
     state.employeeList.forEach(name => {
         const opt = document.createElement("option");
@@ -291,12 +284,11 @@ function initSupervisorScreen() {
         validateSupervisor();
     });
 
-    setupCamera("camera-input-super", "photo-preview-super", "camera-placeholder-super", "btn-snap-super", null, () => {
+    setupCamera(null, "photo-preview-super", "camera-placeholder-super", "btn-snap-super", null, () => {
         validateSupervisor();
     });
 
     function validateSupervisor() {
-        // Must select someone AND take a photo
         const ok = state.targetUserId && state.photoBase64;
         btnIn.disabled = !ok;
         btnOut.disabled = !ok;
@@ -306,91 +298,76 @@ function initSupervisorScreen() {
     btnOut.addEventListener("click", (e) => submitData("check_out", state.targetUserId, e.currentTarget));
 }
 
-// CAMERA HELPER with Compression
-function setupCamera(inputId, imgId, placeholderId, btnId, retakeId, onCapture) {
-    const input = document.getElementById(inputId);
-    const img = document.getElementById(imgId);
-    const placeholder = document.getElementById(placeholderId);
+// CAMERA HELPER (Pro WebRTC Solution)
+let currentStream = null;
+
+async function setupCamera(inputId, imgId, placeholderId, btnId, retakeId, onCapture) {
     const btn = document.getElementById(btnId);
+    if (!btn) return;
+
+    btn.addEventListener("click", () => openCameraModal(imgId, placeholderId, retakeId, onCapture));
+
+    // Also bind retake button if exists
     const retake = retakeId ? document.getElementById(retakeId) : null;
-
-    if (!btn || !input) return;
-
-    btn.addEventListener("click", () => input.click());
-    if (retake) retake.addEventListener("click", () => input.click());
-
-    input.addEventListener("change", async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        // Visual Feedback: Start Loading
-        const originalBtnText = btn.textContent;
-        btn.disabled = true;
-        btn.textContent = "⌛ Обработка...";
-        placeholder.innerHTML = '<div class="spinner"></div><p>Сжатие изображения...</p>';
-
-        try {
-            const compressedDataUrl = await compressImage(file);
-            state.photoBase64 = compressedDataUrl.split(",")[1];
-
-            img.src = compressedDataUrl;
-            img.style.display = "block";
-            placeholder.style.display = "none";
-            if (retake) retake.style.display = "inline-block";
-            if (onCapture) onCapture();
-        } catch (err) {
-            console.error("Compression error:", err);
-            showToast("Ошибка обработки фото");
-        } finally {
-            input.value = ""; // Reset input so change event fires even if same file is picked
-            btn.disabled = false;
-            btn.textContent = originalBtnText;
-            // Restore placeholder in case user wants to try again
-            if (img.style.display === "none") {
-                placeholder.innerHTML = '<span class="placeholder-icon">📸</span><p>Нажмите кнопку ниже,<br>чтобы сделать фото</p>';
-            }
-        }
-    });
+    if (retake) {
+        retake.addEventListener("click", () => openCameraModal(imgId, placeholderId, retakeId, onCapture));
+    }
 }
 
-// Helper: Client-side Image Compression
-async function compressImage(file, maxWidth = 1280, quality = 0.7) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const img = new Image();
-            img.onload = () => {
-                const canvas = document.createElement("canvas");
-                let width = img.width;
-                let height = img.height;
+async function openCameraModal(imgId, placeholderId, retakeId, onCapture) {
+    const modal = document.getElementById("camera-modal");
+    const video = document.getElementById("video-feed");
+    const canvas = document.getElementById("capture-canvas");
+    const btnTake = document.getElementById("btn-take-shot");
+    const btnCancel = document.getElementById("btn-cancel-camera");
+    const img = document.getElementById(imgId);
+    const placeholder = document.getElementById(placeholderId);
+    const retake = retakeId ? document.getElementById(retakeId) : null;
 
-                // Calculate aspect ratio
-                if (width > height) {
-                    if (width > maxWidth) {
-                        height = Math.round(height * (maxWidth / width));
-                        width = maxWidth;
-                    }
-                } else {
-                    if (height > maxWidth) {
-                        width = Math.round(width * (maxWidth / height));
-                        height = maxWidth;
-                    }
-                }
+    try {
+        currentStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: "environment",
+                width: { ideal: 1280 },
+                height: { ideal: 1280 }
+            },
+            audio: false
+        });
+        video.srcObject = currentStream;
+        modal.style.display = "flex";
+    } catch (err) {
+        console.error("Camera Error:", err);
+        showToast("Ошибка камеры. Разрешите доступ в настройках Telegram.");
+        return;
+    }
 
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext("2d");
-                ctx.drawImage(img, 0, 0, width, height);
+    const stopStream = () => {
+        if (currentStream) {
+            currentStream.getTracks().forEach(track => track.stop());
+            currentStream = null;
+        }
+        modal.style.display = "none";
+    };
 
-                // Convert to JPEG with quality reduction
-                resolve(canvas.toDataURL("image/jpeg", quality));
-            };
-            img.onerror = () => reject(new Error("Image load error"));
-            img.src = e.target.result;
-        };
-        reader.onerror = () => reject(new Error("File read error"));
-        reader.readAsDataURL(file);
-    });
+    btnCancel.onclick = stopStream;
+
+    btnTake.onclick = () => {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+        state.photoBase64 = dataUrl.split(",")[1];
+
+        img.src = dataUrl;
+        img.style.display = "block";
+        placeholder.style.display = "none";
+        if (retake) retake.style.display = "inline-block";
+
+        stopStream();
+        if (onCapture) onCapture();
+    };
 }
 
 // COMMUNICATION
@@ -410,7 +387,7 @@ async function submitData(action, targetId = null, btn = null) {
     try {
         const payload = {
             action: action,
-            _initData: state.initData, // Secure transmission in Body
+            _initData: state.initData,
             photo: state.photoBase64,
             user_id: state.user.id,
             group_id: state.groupId,
@@ -422,7 +399,6 @@ async function submitData(action, targetId = null, btn = null) {
             throw new Error("Webhook URL (w) missing");
         }
 
-        console.log(`Submitting ${action} to: ${state.apiUrl}`);
         const response = await fetch(state.apiUrl, {
             method: 'POST',
             headers: {
@@ -433,7 +409,6 @@ async function submitData(action, targetId = null, btn = null) {
         });
 
         if (response.ok) {
-            // Success screen
             document.body.innerHTML = `
                 <div style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;background-color:#0d0d12;color:white;text-align:center;">
                      <div style="font-size:100px; margin-bottom: 20px;">✅</div>
@@ -452,7 +427,6 @@ async function submitData(action, targetId = null, btn = null) {
 
         } else {
             const err = await response.text();
-            console.error("Submit error:", err);
             showToast("Ошибка сервера: " + response.status);
             if (btn) {
                 btn.disabled = false;
@@ -460,7 +434,6 @@ async function submitData(action, targetId = null, btn = null) {
             }
         }
     } catch (e) {
-        console.error("Submit fetch error:", e);
         showToast("Ошибка сети: " + e.message);
         if (btn) {
             btn.disabled = false;
@@ -469,8 +442,6 @@ async function submitData(action, targetId = null, btn = null) {
     }
 }
 
-
-
 function showError(msg) {
     const app = document.getElementById("app");
     if (app) {
@@ -478,5 +449,4 @@ function showError(msg) {
     }
 }
 
-// Start
 init();
