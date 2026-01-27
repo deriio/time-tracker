@@ -319,7 +319,7 @@ async def handle_checkin(request: Request):
             
             logger.info(f"Hashtags generated: {hashtag} for {final_employee_name}")
         
-        caption = f"{status_emoji} **{final_employee_name}** {status_text}{hashtag}\n🕒 Время: {now_time}"
+        caption = f"{status_emoji} <b>{final_employee_name}</b> {status_text}{hashtag}\n🕒 Время: {now_time}"
         if submitted_by:
             caption += f"\n✅ Подтвердил бригадир: {submitted_by}"
 
@@ -340,7 +340,7 @@ async def handle_checkin(request: Request):
             payload = {
                 'chat_id': target_group, 
                 'caption': caption,
-                'parse_mode': 'Markdown'
+                'parse_mode': 'HTML'
             }
             tg_resp = await client.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
@@ -392,8 +392,8 @@ async def handle_claim(request: Request):
 
             # Send notification to Telegram
             user_display = f"@{username}" if username != "Unknown" else f"ID:{user_id}"
-            caption = (f"✅ **Аккаунт привязан**\n\n"
-                      f"Сотрудник: **{full_name}**\n"
+            caption = (f"✅ <b>Аккаунт привязан</b>\n\n"
+                      f"Сотрудник: <b>{full_name}</b>\n"
                       f"Аккаунт: {user_display}\n\n"
                       f"Теперь вы имеете доступ к терминалу.")
             
@@ -401,7 +401,7 @@ async def handle_claim(request: Request):
                 payload = {
                     'chat_id': group_id or user_id,
                     'text': caption,
-                    'parse_mode': 'Markdown'
+                    'parse_mode': 'HTML'
                 }
                 await client.post(
                     f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",

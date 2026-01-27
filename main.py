@@ -228,11 +228,11 @@ async def handle_setup(message: Message, bot: Bot):
     ])
 
     msg = await message.answer(
-        "🏰 **Терминал Учёта Времени**\n\n"
+        "🏰 <b>Терминал Учёта Времени</b>\n\n"
         "Чтобы отметиться, нажмите кнопку ниже.\n"
         "Камера откроется прямо здесь.",
         reply_markup=kb,
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
     logger.info(f"Generated secure MiniApp button for Chat:{message.chat.id}")
     if message.chat.type != "private":
@@ -258,11 +258,11 @@ async def handle_start(message: Message, bot: Bot):
         logger.warning(f"Failed to set menu button: {e}")
 
     await message.answer(
-        "👋 **Добро пожаловать!**\n\n"
-        "Чтобы начать или закончить смену, нажмите кнопку ниже **«Сделать отчет»**.\n"
+        "👋 <b>Добро пожаловать!</b>\n\n"
+        "Чтобы начать или закончить смену, нажмите кнопку ниже <b>«Сделать отчет»</b>.\n"
         "Она всегда доступна в этом чате.",
         reply_markup=kb,
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 @dp.message(lambda m: m.web_app_data is not None)
@@ -368,7 +368,7 @@ async def process_web_check(message: Message, data: dict, user_id: int):
         if dept:
             hashtag = f" #{dept.strip().lower().replace(' ', '_')}"
             
-    caption = f"{status_emoji} **{employee_name}** {status_text}{hashtag}\n🕒 {time_str}"
+    caption = f"{status_emoji} <b>{employee_name}</b> {status_text}{hashtag}\n🕒 {time_str}"
     if submitted_by:
         caption += f"\n✅ Подтверждено бригадиром: {submitted_by}"
     
@@ -378,7 +378,7 @@ async def process_web_check(message: Message, data: dict, user_id: int):
     photo_filename = data.get("photo_filename")
     
     try:
-        await message.bot.send_photo(chat_id=target_chat, photo=photo_url, caption=caption, parse_mode="Markdown")
+        await message.bot.send_photo(chat_id=target_chat, photo=photo_url, caption=caption, parse_mode="HTML")
         if str(target_chat) != str(message.chat.id):
             await message.answer("✅ Отчет успешно отправлен в группу.")
         
@@ -398,7 +398,7 @@ async def process_web_check(message: Message, data: dict, user_id: int):
                     logger.warning(f"Failed to delete photo {photo_filename}: {e_cleanup} (will be auto-deleted by TTL)")
     except Exception as e_photo:
         logger.error(f"Report delivery failed: {e_photo}")
-        await message.answer(caption + "\n⚠️ (Ошибка отправки в группу)", parse_mode="Markdown")
+        await message.answer(caption + "\n⚠️ (Ошибка отправки в группу)", parse_mode="HTML")
     
     try: await status_msg.delete()
     except: pass
@@ -413,8 +413,8 @@ async def process_web_claim(message: Message, data: dict, user_id: int):
         refresh_user_cache()
         
         await message.answer(
-            f"✅ Аккаунт успешно привязан к: **{selected_name}**", 
-            parse_mode="Markdown",
+            f"✅ Аккаунт успешно привязан к: <b>{selected_name}</b>", 
+            parse_mode="HTML",
             reply_markup=get_main_keyboard(user_id, message.chat.id)
         )
         logger.info(f"User {user_id} claimed {selected_name}")
@@ -428,10 +428,10 @@ async def handle_id_command(message: Message):
     """Returns the current chat ID."""
     chat_type = message.chat.type
     await message.answer(
-        f"🆔 **ID этого чата:** `{message.chat.id}`\n"
-        f"👤 **Ваш ID:** `{message.from_user.id}`\n"
+        f"🆔 <b>ID этого чата:</b> <code>{message.chat.id}</code>\n"
+        f"👤 <b>Ваш ID:</b> <code>{message.from_user.id}</code>\n"
         f"Тип чата: {chat_type}",
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
     logger.info(f"ID Request: Chat:{message.chat.id}, User:{message.from_user.id}")
 
@@ -441,9 +441,9 @@ async def on_bot_added(event: ChatMemberUpdated):
     if event.new_chat_member.status in ["member", "administrator"]:
         await bot.send_message(
             event.chat.id, 
-            f"👋 Привет! Я добавлен в эту группу.\n🆔 **ID этой группы:** `{event.chat.id}`\n"
+            f"👋 Привет! Я добавлен в эту группу.\n🆔 <b>ID этой группы:</b> <code>{event.chat.id}</code>\n"
             "Скопируйте этот ID и вставьте его в .env файл.",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
 # Handler for all other text messages (Private chats only)
