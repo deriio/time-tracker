@@ -337,7 +337,7 @@ async def handle_checkin(request: Request):
         target_group = env_group_id or group_id or user_id
 
         
-        logger.info(f"Routing debug: team='{user_team}', lower='{team_lower}', env_var='{env_var_name}', env_val='{env_group_id}', final_target='{target_group}'")
+        logger.info(f"Routing debug: team='{user_team}', lower='{team_lower}', env_val='{env_group_id}', final_target='{target_group}'")
 
 
         async with httpx.AsyncClient() as client:
