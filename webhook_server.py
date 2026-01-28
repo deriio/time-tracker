@@ -303,6 +303,7 @@ async def handle_checkin(request: Request):
         
         # Add Hashtags for Office-style teams (Robust check)
         hashtag = ""
+        team_lower = str(user_team).lower().strip()
         office_teams = ["офис", "цех(офис)", "ташкент(офис)"]
         if team_lower in office_teams:
             # 1. Action hashtag
