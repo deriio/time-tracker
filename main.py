@@ -359,12 +359,14 @@ async def process_web_check(message: Message, data: dict, user_id: int):
     status_emoji = "🟢" if action == "check_in" else "🔴"
     status_text = "НАЧАЛ РАБОТУ" if action == "check_in" else "ЗАКОНЧИЛ РАБОТУ"
     
-    # Add Hashtags for Office team
+    # Add Hashtags for Office-style teams
     hashtag = ""
     target_user = USER_CACHE_ID.get(str(target_tg_id))
     user_team = target_user["team"] if target_user else "Цех"
-    if user_team == "Офис":
-        dept = target_user.get("department", "")
+    team_lower = str(user_team).lower().strip()
+    office_teams = ["офис", "цех(офис)", "ташкент(офис)"]
+    if team_lower in office_teams:
+        dept = target_user.get("department", "") if target_user else ""
         if dept:
             hashtag = f" #{dept.strip().lower().replace(' ', '_')}"
             
@@ -373,8 +375,13 @@ async def process_web_check(message: Message, data: dict, user_id: int):
         caption += f"\n✅ Подтверждено бригадиром: {submitted_by}"
     
     # Routing determine target chat
-    env_suffix = "WORKSHOP" if user_team == "Цех" else "OFFICE"
-    target_chat = os.getenv(f"{env_suffix}_GROUP_ID") or data.get("group_id") or message.chat.id
+    groups_mapping = {
+        "цех": os.getenv("WORKSHOP_GROUP_ID"),
+        "офис": os.getenv("OFFICE_GROUP_ID"),
+        "цех(офис)": os.getenv("CEH_OFFICE_GROUP_ID"),
+        "ташкент(офис)": os.getenv("TASHKENT_GROUP_ID")
+    }
+    target_chat = groups_mapping.get(team_lower) or data.get("group_id") or message.chat.id
     photo_filename = data.get("photo_filename")
     
     try:

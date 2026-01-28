@@ -301,9 +301,10 @@ async def handle_checkin(request: Request):
         status_emoji = "🟢" if action == "check_in" else "🔴"
         status_text = "НАЧАЛ РАБОТУ" if action == "check_in" else "ЗАКОНЧИЛ РАБОТУ"
         
-        # Add Hashtags for Office team (Robust check)
+        # Add Hashtags for Office-style teams (Robust check)
         hashtag = ""
-        if str(user_team).strip().lower() == "офис":
+        office_teams = ["офис", "цех(офис)", "ташкент(офис)"]
+        if team_lower in office_teams:
             # 1. Action hashtag
             action_tag = " #приход" if action == "check_in" else " #уход"
             hashtag += action_tag
@@ -324,12 +325,16 @@ async def handle_checkin(request: Request):
             caption += f"\n✅ Подтвердил бригадир: {submitted_by}"
 
         # Determine target group ID from .env
-        team_lower = str(user_team).lower().strip()
-        env_suffix = "WORKSHOP" if team_lower == "цех" else "OFFICE"
+        groups_mapping = {
+            "цех": os.getenv("WORKSHOP_GROUP_ID"),
+            "офис": os.getenv("OFFICE_GROUP_ID"),
+            "цех(офис)": os.getenv("CEH_OFFICE_GROUP_ID"),
+            "ташкент(офис)": os.getenv("TASHKENT_GROUP_ID")
+        }
         
-        env_var_name = f"{env_suffix}_GROUP_ID"
-        env_group_id = os.getenv(env_var_name)
+        env_group_id = groups_mapping.get(team_lower)
         target_group = env_group_id or group_id or user_id
+
         
         logger.info(f"Routing debug: team='{user_team}', lower='{team_lower}', env_var='{env_var_name}', env_val='{env_group_id}', final_target='{target_group}'")
 

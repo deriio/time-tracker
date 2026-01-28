@@ -231,7 +231,9 @@ class GoogleSheetManager:
             # Map of team (normalized) -> folder_id
             teams_mapping = {
                 "цех": os.getenv("WORKSHOP_FOLDER_ID"),
-                "офис": os.getenv("OFFICE_FOLDER_ID")
+                "офис": os.getenv("OFFICE_FOLDER_ID"),
+                "цех(офис)": os.getenv("CEH_OFFICE_FOLDER_ID"),
+                "ташкент(офис)": os.getenv("TASHKENT_FOLDER_ID")
             }
             
             summary = []
@@ -291,7 +293,15 @@ class GoogleSheetManager:
         """Adds a row for a new user in the specific team's report sheet."""
         now = self._get_moscow_time()
         target_name = self._get_sheet_name(now)
-        folder_id = os.getenv("WORKSHOP_FOLDER_ID") if team == "Цех" else os.getenv("OFFICE_FOLDER_ID")
+        
+        team_norm = str(team).lower().strip()
+        teams_mapping = {
+            "цех": os.getenv("WORKSHOP_FOLDER_ID"),
+            "офис": os.getenv("OFFICE_FOLDER_ID"),
+            "цех(офис)": os.getenv("CEH_OFFICE_FOLDER_ID"),
+            "ташкент(офис)": os.getenv("TASHKENT_FOLDER_ID")
+        }
+        folder_id = teams_mapping.get(team_norm)
         
         if not folder_id: return False
         
@@ -426,7 +436,13 @@ class GoogleSheetManager:
         target_name = self._get_sheet_name(now)
         
         team_norm = str(team).lower().strip()
-        folder_id = os.getenv("WORKSHOP_FOLDER_ID") if team_norm == "цех" else os.getenv("OFFICE_FOLDER_ID")
+        teams_mapping = {
+            "цех": os.getenv("WORKSHOP_FOLDER_ID"),
+            "офис": os.getenv("OFFICE_FOLDER_ID"),
+            "цех(офис)": os.getenv("CEH_OFFICE_FOLDER_ID"),
+            "ташкент(офис)": os.getenv("TASHKENT_FOLDER_ID")
+        }
+        folder_id = teams_mapping.get(team_norm)
         
         if not folder_id:
             logger.error(f"Missing folder ID for team: {team}")
