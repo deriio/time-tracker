@@ -78,11 +78,17 @@ async function init(retryCount = 0) {
             // Dynamic Supervisor Logic: Allow supervisor for ANY team
             state.role = (me[2] === 's') ? 'supervisor' : 'employee';
 
-            // List includes employees from the SAME team as the supervisor
-            const myTeam = state.team.trim().toLowerCase();
+            // Normalize Team Name (remove spaces, lowercase)
+            const myTeamRaw = (state.team || "").toLowerCase().replace(/\s/g, '');
+
             state.employeeList = users
-                .filter(u => (u[3] || "").trim().toLowerCase() === myTeam)
+                .filter(u => {
+                    const userTeam = (u[3] || "").toLowerCase().replace(/\s/g, '');
+                    return userTeam === myTeamRaw;
+                })
                 .map(u => u[1]);
+
+            state.debugCount = state.employeeList.length;
         } else {
             state.role = "orphan";
         }
@@ -98,12 +104,12 @@ function updateDebugFooter() {
     if (!footer) {
         footer = document.createElement("div");
         footer.id = "debug-footer";
-        footer.style = "position:fixed;bottom:2px;left:0;width:100%;text-align:center;font-size:9px;color:rgba(255,255,255,0.15);pointer-events:none;z-index:9999;font-family:monospace;";
+        footer.style = "position:fixed;bottom:2px;left:0;width:100%;text-align:center;font-size:10px;color:rgba(255,255,255,0.5);pointer-events:none;z-index:9999;font-family:monospace;background:rgba(0,0,0,0.5);padding:2px;";
         document.body.appendChild(footer);
     }
     const teamInfo = state.team ? ` | ${state.team}` : "";
-    const deptInfo = state.department ? ` (${state.department})` : "";
-    footer.innerText = `ID: ${state.user.id || 'N/A'}${teamInfo}${deptInfo} | SDK: ${tg.version} | ${new Date().toLocaleTimeString()}`;
+    const countInfo = state.debugCount !== undefined ? ` [Found: ${state.debugCount}]` : "";
+    footer.innerText = `ID: ${state.user.id || 'N/A'}${teamInfo}${countInfo} | v2.2`;
 }
 
 function initUnauthorizedScreen() {
