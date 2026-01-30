@@ -75,13 +75,13 @@ async function init(retryCount = 0) {
             state.team = me[3] || "";
             state.department = me[4] || "";
 
-            // Supervisor only for Workshop (Цех) team
-            const isWorkshop = state.team.trim().toLowerCase() === "цех";
-            state.role = (me[2] === 's' && isWorkshop) ? 'supervisor' : 'employee';
+            // Dynamic Supervisor Logic: Allow supervisor for ANY team
+            state.role = (me[2] === 's') ? 'supervisor' : 'employee';
 
-            // List only includes Workshop employees
+            // List includes employees from the SAME team as the supervisor
+            const myTeam = state.team.trim().toLowerCase();
             state.employeeList = users
-                .filter(u => (u[3] || "").trim().toLowerCase() === "цех")
+                .filter(u => (u[3] || "").trim().toLowerCase() === myTeam)
                 .map(u => u[1]);
         } else {
             state.role = "orphan";
