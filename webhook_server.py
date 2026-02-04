@@ -238,9 +238,12 @@ async def handle_checkin(request: Request):
         action = data.get("action")
         target_info = data.get("target_user_id") # Explicit target (supervisor mode)
         employee_name = data.get("employee_name") # Fallback
-        target_info = data.get("target_user_id") # Present if supervisor
         
-        logger.info(f"Identity check: user_id={user_id}, action={action}, target={target_info}")
+        # NEW: Get team and department from request (sent by frontend)
+        request_team = data.get("team")
+        request_dept = data.get("department")
+        
+        logger.info(f"Identity check: user_id={user_id}, action={action}, target={target_info}, req_team={request_team}")
 
         if not photo_b64:
             return {"ok": False, "error": "No photo"}
@@ -271,9 +274,12 @@ async def handle_checkin(request: Request):
                 user_team = u_user.get("team", "Цех")
                 user_dept = u_user.get("department", "")
             else:
-                # Fallback to name from request
+                # FIXED: Fallback now uses team/dept from request instead of default
                 final_employee_name = employee_name or "Сотрудник"
                 target_tg_id = user_id
+                user_team = request_team or "Цех"
+                user_dept = request_dept or ""
+                logger.warning(f"User {user_id} not found in DB. Using request data: team={user_team}, dept={user_dept}")
 
         # 3. Identify Submitter
         submitted_by = ""

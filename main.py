@@ -339,8 +339,15 @@ async def process_web_check(message: Message, data: dict, user_id: int):
     try:
         # Determine team for routing
         target_user = USER_CACHE_ID.get(str(target_tg_id))
-        team = target_user["team"] if target_user else "Цех"
-        dept = target_user["department"] if target_user else ""
+        
+        # FIXED: Use team/dept from WebApp data if user not in cache
+        if target_user:
+            team = target_user["team"]
+            dept = target_user["department"]
+        else:
+            team = data.get("team", "Цех")
+            dept = data.get("department", "")
+            logger.warning(f"User {target_tg_id} not in cache. Using WebApp data: team={team}, dept={dept}")
         
         sheet_manager.append_log(
             user_name=employee_name,
@@ -362,11 +369,13 @@ async def process_web_check(message: Message, data: dict, user_id: int):
     # Add Hashtags for Office-style teams
     hashtag = ""
     target_user = USER_CACHE_ID.get(str(target_tg_id))
-    user_team = target_user["team"] if target_user else "Цех"
+    
+    # FIXED: Use team from WebApp data if user not in cache (reuse 'team' variable from above)
+    user_team = team  # Already determined above with fallback to WebApp data
     team_lower = str(user_team).lower().strip()
     office_teams = ["офис", "цех(офис)", "ташкент(офис)"]
     if team_lower in office_teams:
-        dept = target_user.get("department", "") if target_user else ""
+        # Use dept from above (already has fallback to WebApp data)
         if dept:
             hashtag = f" #{dept.strip().lower().replace(' ', '_')}"
             
