@@ -1,16 +1,17 @@
 import hashlib
 import hmac
+import json
 from urllib.parse import parse_qsl
 
-def validate_webapp_data(init_data: str, bot_token: str) -> bool:
+def validate_webapp_data(init_data: str, bot_token: str) -> dict | None:
     """
     Validates the signature of data received from the Telegram Web App.
-    Prevents data spoofing.
+    Returns the parsed user dictionary if valid, otherwise None.
     """
     try:
         parsed = dict(parse_qsl(init_data, keep_blank_values=True))
         if "hash" not in parsed:
-            return False
+            return None
             
         received_hash = parsed.pop("hash")
         
@@ -29,6 +30,11 @@ def validate_webapp_data(init_data: str, bot_token: str) -> bool:
             secret_key, data_check_string.encode(), hashlib.sha256
         ).hexdigest()
         
-        return calculated_hash == received_hash
+        if calculated_hash == received_hash:
+            # The 'user' field in init_data is a JSON string
+            user_json = parsed.get("user")
+            return json.loads(user_json) if user_json else {}
+        
+        return None
     except Exception:
-        return False
+        return None

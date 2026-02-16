@@ -88,43 +88,7 @@
 *   **FastAPI & Uvicorn**: Веб-сервер для обработки хуков и API.
 *   **gspread & google-api-python-client**: Работа с Google Sheets и Drive.
 *   **httpx**: Асинхронные HTTP запросы.
-*   **Nginx**: Reverse proxy с SSL termination (production).
-*   **Systemd**: Управление сервисами на VPS (production).
-
----
-
-## 🚀 Развертывание на VPS
-
-Система поддерживает два режима работы:
-
-### Development (Cloudflare Tunnel)
-*   Локальный запуск с проксированием через Cloudflare Tunnel
-*   Быстрое тестирование без настройки VPS
-
-### Production (VPS + Nginx)
-*   Полноценное развертывание на VPS
-*   Nginx как reverse proxy с SSL
-*   Systemd для автоматического запуска сервисов
-*   **Автоматическая очистка фото** с TTL 5 минут
-
-#### Ключевые особенности production:
-
-1. **Двухуровневая очистка фото**:
-   - Немедленное удаление после успешной отправки в Telegram
-   - Фоновая задача удаляет фото старше 5 минут (на случай ошибок)
-
-2. **Systemd сервисы**:
-   - `timetracker-bot.service` - Telegram бот
-   - `timetracker-webhook.service` - FastAPI webhook сервер
-
-3. **Мониторинг**:
-   - Health check скрипт
-   - Автоматическое резервное копирование
-   - Логирование через journald
-
-**Быстрый старт**: См. [`deploy/README.md`](deploy/README.md) для полной инструкции по развертыванию.
-
-**Технический план**: См. [`Technical Deployment plan.md`](Technical%20Deployment%20plan.md) для детального технического описания.
+*   **Cloudflare Tunnel**: Проброс локального порта 8000 в интернет для работы MiniApp.
 
 ---
 
@@ -142,7 +106,7 @@ OFFICE_GROUP_ID=...    # Группа для "Офиса"
 
 # Настройки WebApp
 WEBAPP_URL=...         # URL хостинга MiniApp (например, GitHub Pages)
-WEBHOOK_SERVER_URL=... # URL Cloudflare туннеля (или домен VPS)
+WEBHOOK_SERVER_URL=... # URL Cloudflare туннеля
 ```
 
 ---

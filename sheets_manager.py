@@ -24,6 +24,42 @@ SCOPES = [
 ]
 
 class GoogleSheetManager:
+
+    # Define Team Configurations as Single Source of Truth
+    # Order matters for partial matching in get_team_settings
+    TEAM_CONFIGS = [
+        {
+            "match_key": "Ташкент(офис)",
+            "name": "Ташкент(офис)",
+            "folder_env": "TASHKENT_FOLDER_ID", 
+            "group_env": "TASHKENT_GROUP_ID"
+        },
+        {
+            "match_key": "Цех(офис)",
+            "name": "Цех(офис)",
+            "folder_env": "CEH_OFFICE_FOLDER_ID", 
+            "group_env": "CEH_OFFICE_GROUP_ID"
+        },
+        {
+            "match_key": "цех (офис)", # Variant with space
+            "name": "Цех(офис)",
+            "folder_env": "CEH_OFFICE_FOLDER_ID", 
+            "group_env": "CEH_OFFICE_GROUP_ID"
+        },
+        {
+            "match_key": "цех",
+            "name": "Цех", 
+            "folder_env": "WORKSHOP_FOLDER_ID", 
+            "group_env": "WORKSHOP_GROUP_ID" # Often None/Default
+        },
+        {
+            "match_key": "офис",
+            "name": "Офис",
+            "folder_env": "OFFICE_FOLDER_ID", 
+            "group_env": "OFFICE_GROUP_ID"
+        }
+    ]
+
     def __init__(self, json_path, drive_folder_id, template_file_id=None):
         self.json_path = json_path
         self.drive_folder_id = drive_folder_id
@@ -67,6 +103,29 @@ class GoogleSheetManager:
         """Standardizes username for consistent comparison."""
         if not username: return ""
         return str(username).replace("@", "").strip().lower()
+
+    def get_team_settings(self, team_name: str):
+        """
+        Returns configurated settings (folder_id, group_id, canonical name) for a team.
+        Supports 4 user groups with fuzzy matching.
+        """
+        t = str(team_name).strip().lower()
+        
+        for config in self.TEAM_CONFIGS:
+            if config["match_key"] in t:
+                return {
+                    "folder_id": os.getenv(config["folder_env"]),
+                    "group_id": os.getenv(config["group_env"]),
+                    "name": config["name"]
+                }
+            
+        # Fallback to Workshop (Цех) default
+        logger.warning(f"Unknown team name: '{team_name}'. Defaulting to Workshop.")
+        return {
+            "folder_id": os.getenv("WORKSHOP_FOLDER_ID"),
+            "group_id": os.getenv("WORKSHOP_GROUP_ID"),
+            "name": "Цех"
+        }
 
     def get_users_v2(self):
         """
@@ -180,65 +239,28 @@ class GoogleSheetManager:
             logger.error(f"Failed to bind ID: {e}")
             return False
 
-    def get_users_from_template(self):
-        """
-        LEGACY: Reads users from the 'Config_Users' tab.
-        Updated to handle new schema but return old formats for compatibility.
-        """
-        try:
-            sheet = self.gc.open_by_key(self.template_file_id)
-            wks = sheet.worksheet("Config_Users")
-            
-            # Read from A2 to E (New Schema)
-            raw_values = wks.get("A2:E") 
-            
-            users_cache = {} # normalized_username -> real_name
-            valid_rows = []
-            all_names_set = set()
-            
-            if not raw_values:
-                logger.warning("Config_Users is empty in Master Template.")
-                return {}, [], set()
-
-            for row in raw_values:
-                if len(row) >= 1:
-                    name = row[0].strip()
-                    if name:
-                        all_names_set.add(name)
-                        
-                    if len(row) >= 2:
-                        username = row[1].strip()
-                        if name and username:
-                            norm_username = username.replace("@", "").lower()
-                            users_cache[norm_username] = name
-                            valid_rows.append(row[:2]) # Still return only A:B for generic sync
-            
-            logger.info(f"Loaded {len(users_cache)} users from Master Template.")
-            return users_cache, valid_rows, all_names_set
-            
-        except Exception as e:
-            logger.error(f"Failed to load users from template: {e}")
-            raise e
 
     def sync_users_to_current_month(self, users_list=None):
         """
-        Updates the 'Config_Users' tab in the CURRENT month's sheets for both teams.
+        Updates the 'Config_Users' tab in the CURRENT month's sheets for ALL configured teams.
         """
         try:
             now = self._get_moscow_time()
             target_name = self._get_sheet_name(now)
             
-            # Map of team (normalized) -> folder_id
-            teams_mapping = {
-                "цех": os.getenv("WORKSHOP_FOLDER_ID"),
-                "офис": os.getenv("OFFICE_FOLDER_ID"),
-                "цех(офис)": os.getenv("CEH_OFFICE_FOLDER_ID"),
-                "ташкент(офис)": os.getenv("TASHKENT_FOLDER_ID")
-            }
-            
             summary = []
-            for team_key, folder_id in teams_mapping.items():
-                if not folder_id: continue
+            # Use unique canonical names to avoid duplicate syncs (e.g. "цех" vs "цех (офис)")
+            processed_teams = set()
+            
+            for config in self.TEAM_CONFIGS:
+                team_canonical = config["name"]
+                if team_canonical in processed_teams:
+                    continue
+                processed_teams.add(team_canonical)
+
+                folder_id = os.getenv(config["folder_env"])
+                if not folder_id: 
+                    continue
                 
                 # Search sheet in specific folder
                 query = f"name = '{target_name}' and '{folder_id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false"
@@ -247,12 +269,12 @@ class GoogleSheetManager:
                 
                 if items:
                     file_id = items[0]['id']
-                    if self._filter_sheet_users(file_id, team_key):
-                        summary.append(f"{team_key}: Synced successfully.")
+                    if self._filter_sheet_users(file_id, team_canonical):
+                        summary.append(f"{team_canonical}: Synced.")
                     else:
-                        summary.append(f"{team_key}: Sync failed.")
+                        summary.append(f"{team_canonical}: Sync failed.")
                 else:
-                    summary.append(f"{team_key}: Sheet not found.")
+                    summary.append(f"{team_canonical}: Sheet not found.")
             
             return " | ".join(summary)
 
@@ -294,16 +316,12 @@ class GoogleSheetManager:
         now = self._get_moscow_time()
         target_name = self._get_sheet_name(now)
         
-        team_norm = str(team).lower().strip()
-        teams_mapping = {
-            "цех": os.getenv("WORKSHOP_FOLDER_ID"),
-            "офис": os.getenv("OFFICE_FOLDER_ID"),
-            "цех(офис)": os.getenv("CEH_OFFICE_FOLDER_ID"),
-            "ташкент(офис)": os.getenv("TASHKENT_FOLDER_ID")
-        }
-        folder_id = teams_mapping.get(team_norm)
+        settings = self.get_team_settings(team)
+        folder_id = settings["folder_id"]
         
-        if not folder_id: return False
+        if not folder_id: 
+            logger.error(f"Cannot add user {full_name}: Folder ID not found for team {team}")
+            return False
         
         try:
             query = f"name = '{target_name}' and '{folder_id}' in parents and trashed = false"
@@ -435,14 +453,8 @@ class GoogleSheetManager:
         now = self._get_moscow_time()
         target_name = self._get_sheet_name(now)
         
-        team_norm = str(team).lower().strip()
-        teams_mapping = {
-            "цех": os.getenv("WORKSHOP_FOLDER_ID"),
-            "офис": os.getenv("OFFICE_FOLDER_ID"),
-            "цех(офис)": os.getenv("CEH_OFFICE_FOLDER_ID"),
-            "ташкент(офис)": os.getenv("TASHKENT_FOLDER_ID")
-        }
-        folder_id = teams_mapping.get(team_norm)
+        settings = self.get_team_settings(team)
+        folder_id = settings["folder_id"]
         
         if not folder_id:
             logger.error(f"Missing folder ID for team: {team}")
@@ -455,8 +467,11 @@ class GoogleSheetManager:
             items = results.get('files', [])
 
             if items:
+                if len(items) > 1:
+                    logger.warning(f"⚠️ MULTIPLE SHEETS FOUND for {target_name} in {folder_id}. Using first: {items[0]['id']}")
+                
                 file_id = items[0]['id']
-                logger.info(f"Found existing sheet for {team}: {target_name}")
+                logger.info(f"Found existing sheet for {team}: {target_name} ({file_id})")
                 self.update_sheet_headers(file_id, now)
                 self._filter_sheet_users(file_id, team)
                 return file_id
@@ -529,7 +544,7 @@ class GoogleSheetManager:
     def append_log(self, user_name: str, telegram_id: int, log_type: str = "Log", 
                    photo_url: str = "", submitted_by: str = "", team="Цех"):
         """
-        Appends a log entry to the current month's sheet of the SPECIFIC team.
+        Appends a log entry to the specific team's sheet with retries.
         """
         now = self._get_moscow_time()
         
@@ -542,24 +557,33 @@ class GoogleSheetManager:
             sheet = self.gc.open_by_key(file_id)
             wks = sheet.worksheet("DB_Logs")
             
-            # MANUAL ROW CALCULATION TO PREVENT SHIFTS
-            # Find the next available row based on Column A
-            col_a = wks.col_values(1)
-            next_row = len(col_a) + 1
-            
             date_str = now.strftime("%d.%m.%Y")
             time_str = now.strftime("%H:%M")
             
-            # Row Format: Date, Time, Employee Name, Type, Submitted By
+            # Format: Date, Time, Name, LogType, Submitter
             row = [date_str, time_str, user_name, log_type, submitted_by]
-            
-            # Update specific range A{next_row}
-            range_name = f"A{next_row}"
-            wks.update(range_name, [row], value_input_option="USER_ENTERED")
-            
-            logger.info(f"Logged {log_type} for {user_name} at {time_str} (Row {next_row})")
+
+            # Retry Logic for Reliability
+            import time
+            for attempt in range(3):
+                try:
+                    res = wks.append_row(row, value_input_option="USER_ENTERED")
+                    updates = res.get('updates', {})
+                    
+                    if updates.get('updatedRows') == 1:
+                        logger.info(f"✅ LOG SAVED: {log_type} for {user_name} (Team:{team}) -> Doc:{file_id} Range:{updates.get('updatedRange')}")
+                        return
+                    else:
+                        logger.warning(f"Append attempt {attempt+1} dubious response: {res}")
+                
+                except Exception as ex:
+                    logger.warning(f"Append attempt {attempt+1} failed: {ex}")
+                    if attempt < 2:
+                        time.sleep(1) # wait 1s before retry
+                    else:
+                        raise ex
             
         except Exception as e:
-            logger.error(f"Failed to append log: {e}")
+            logger.error(f"CRITICAL: Failed to append log for {user_name}: {e}")
             raise e
 
