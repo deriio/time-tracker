@@ -1,5 +1,5 @@
 import os
-import json
+
 import logging
 import asyncio
 import httpx
@@ -155,16 +155,30 @@ dp = Dispatcher()
 dp.update.outer_middleware(OuterLoggerMiddleware())
 dp.message.middleware(AuthMiddleware())
 
-# Fresh Cache Command
+# Admin Tools
 @dp.message(Command("update"))
 async def handle_update(message: Message):
-    if message.from_user.id not in ADMIN_IDS: return
+    """Refreshes user cache and syncs with Google Sheets."""
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    
+    status_msg = await message.reply("🔄 Обновление базы из таблиц...")
+    
     if refresh_user_cache():
-        await message.reply("✅ База пользователей обновлена.")
+        try:
+            users_list = sheet_manager.get_users_v2()
+            sync_result = sheet_manager.sync_users_to_current_month(users_list)
+            await status_msg.edit_text(
+                f"✅ Успешно.\n"
+                f"Пользователей в кэше: {len(ALL_NAMES_SET)}\n"
+                f"Статус синхронизации: {sync_result}"
+            )
+        except Exception as e:
+            logger.error(f"Sync failed after cache refresh: {e}")
+            await status_msg.edit_text(f"✅ Кэш обновлен, но синхронизация не удалась: {e}")
     else:
-        await message.reply("❌ Ошибка обновления базы.")
+        await status_msg.edit_text("❌ Ошибка при обновлении кэша. Проверьте логи.")
 
-# Admin Tools
 @dp.message(Command("debug_users"))
 async def handle_debug_users(message: Message):
     if message.from_user.id not in ADMIN_IDS: return
@@ -173,21 +187,6 @@ async def handle_debug_users(message: Message):
     for u in users:
         logger.info(f"Name: [{u['name']}], ID: [{u['tg_id']}], Role: [{u['role']}]")
     await message.reply(f"Dumped {len(users)} users to log.")
-
-@dp.message(Command("update"))
-async def handle_update_full(message: Message):
-    if message.from_user.id not in ADMIN_IDS: return
-    await message.reply("🔄 Обновление базы из таблиц...")
-    if refresh_user_cache():
-        # Sync users to current month folders for both departments
-        try:
-            users_list = sheet_manager.get_users_v2()
-            sync_result = sheet_manager.sync_users_to_current_month(users_list)
-            await message.reply(f"✅ Успешно.\nПользователей: {len(ALL_NAMES_SET)}\n{sync_result}")
-        except Exception as e:
-            await message.reply(f"✅ Кэш обновлен, но синхронизация не удалась: {e}")
-    else:
-        await message.reply("❌ Ошибка при обновлении кэша.")
 
 # Helper for dynamic WebApp URL
 def get_webapp_url(user_id, chat_id=None):
@@ -265,151 +264,6 @@ async def handle_start(message: Message, bot: Bot):
         parse_mode="Markdown"
     )
 
-@dp.message(lambda m: m.web_app_data is not None)
-async def handle_webapp_data(message: Message):
-    logger.info(f"RECEIVED WebApp Data from {message.from_user.id}")
-    try:
-        data = json.loads(message.web_app_data.data)
-        user_id = message.from_user.id
-        action = data.get("action")
-
-        if action in ["check_in", "check_out"]:
-            await process_web_check(message, data, user_id)
-        elif action == "claim":
-            await process_web_claim(message, data, user_id)
-    except Exception as e:
-        logger.error(f"WebAppData error: {e}")
-        await message.answer("❌ Ошибка обработки данных WebApp.")
-
-async def process_web_check(message: Message, data: dict, user_id: int):
-    from aiogram.types import ReplyKeyboardRemove
-    
-    image_data = data.get("image")
-    target_info = data.get("target_user_id") or user_id
-    action = data["action"]
-
-    status_msg = await message.answer("⌛ Обработка...")
-    
-    photo_url = None
-    if image_data and image_data.startswith("http"):
-        photo_url = image_data
-    else:
-        logger.error(f"Invalid photo data: {type(image_data)}")
-        await message.answer("❌ Ошибка: фото должно быть загружено на сервер.")
-        return
-
-    # 2. Get Employee Info
-    employee_name = None
-    target_tg_id = None
-
-    if isinstance(target_info, str) and not target_info.isdigit():
-        # It's a name (from Supervisor dropdown)
-        employee_name = target_info
-        # Try to find their TG ID in cache
-        for tid, u_obj in USER_CACHE_ID.items():
-            if u_obj["name"] == employee_name:
-                target_tg_id = tid
-                break
-    else:
-        # It's a TG ID
-        target_tg_id = str(target_info)
-        u_obj = USER_CACHE_ID.get(target_tg_id)
-        if u_obj:
-            employee_name = u_obj["name"]
-        else:
-            # Fallback search by ID if not in cache (fresh user)
-            users_v2 = sheet_manager.get_users_v2()
-            for u in users_v2:
-                if str(u["tg_id"]) == target_tg_id:
-                    employee_name = u["name"]
-                    break
-    
-    if not employee_name:
-        await message.answer("❌ Ошибка: Сотрудник не найден в базе.")
-        return
-
-    # 3. Determine submitter (Supervisor mode)
-    submitted_by = ""
-    if str(target_tg_id) != str(user_id):
-        submitter_obj = USER_CACHE_ID.get(str(user_id))
-        submitted_by = submitter_obj["name"] if submitter_obj else f"ID:{user_id}"
-
-    # 4. Log to Sheets with Team Routing
-    log_type = "Приход" if action == "check_in" else "Уход"
-    try:
-        # Determine team for routing
-        target_user = USER_CACHE_ID.get(str(target_tg_id))
-        team = target_user["team"] if target_user else "Цех"
-        dept = target_user["department"] if target_user else ""
-        
-        sheet_manager.append_log(
-            user_name=employee_name,
-            telegram_id=target_tg_id,
-            log_type=log_type,
-            photo_url=photo_url,
-            submitted_by=submitted_by,
-            team=team
-        )
-    except Exception as log_err:
-        logger.error(f"Append log failed: {log_err}")
-        await message.answer("⚠️ Ошибка записи в таблицу, но я попробую отправить фото.")
-
-    # 5. Notify Group/User with Routing and Hashtags
-    time_str = sheet_manager._get_moscow_time().strftime('%H:%M')
-    status_emoji = "🟢" if action == "check_in" else "🔴"
-    status_text = "НАЧАЛ РАБОТУ" if action == "check_in" else "ЗАКОНЧИЛ РАБОТУ"
-    
-    # Add Hashtags for Office team
-    hashtag = ""
-    target_user = USER_CACHE_ID.get(str(target_tg_id))
-    user_team = target_user["team"] if target_user else "Цех"
-    if user_team == "Офис":
-        dept = target_user.get("department", "")
-        if dept:
-            hashtag = f" #{dept.strip().lower().replace(' ', '_')}"
-            
-    caption = f"{status_emoji} **{employee_name}** {status_text}{hashtag}\n🕒 {time_str}"
-    if submitted_by:
-        caption += f"\n✅ Подтверждено бригадиром: {submitted_by}"
-    
-    # Routing determine target chat
-    env_suffix = "WORKSHOP" if user_team == "Цех" else "OFFICE"
-    target_chat = os.getenv(f"{env_suffix}_GROUP_ID") or data.get("group_id") or message.chat.id
-    photo_filename = data.get("photo_filename")
-    
-    try:
-        await message.bot.send_photo(chat_id=target_chat, photo=photo_url, caption=caption, parse_mode="Markdown")
-        if str(target_chat) != str(message.chat.id):
-            await message.answer("✅ Отчет успешно отправлен в группу.")
-        
-        # Cleanup server storage
-        if photo_filename and WEBHOOK_SERVER_URL:
-            async with httpx.AsyncClient() as client:
-                await client.delete(f"{WEBHOOK_SERVER_URL.rstrip('/')}/api/photos/{photo_filename}", timeout=5.0)
-    except Exception as e_photo:
-        logger.error(f"Report delivery failed: {e_photo}")
-        await message.answer(caption + "\n⚠️ (Ошибка отправки в группу)", parse_mode="Markdown")
-    
-    try: await status_msg.delete()
-    except: pass
-
-async def process_web_claim(message: Message, data: dict, user_id: int):
-    from aiogram.types import ReplyKeyboardRemove
-    selected_name = data.get("full_name")
-    if not selected_name: return
-
-    if sheet_manager.bind_telegram_id(user_id, selected_name):
-        # Refresh local cache for this user
-        refresh_user_cache()
-        
-        await message.answer(
-            f"✅ Аккаунт успешно привязан к: **{selected_name}**", 
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard(user_id, message.chat.id)
-        )
-        logger.info(f"User {user_id} claimed {selected_name}")
-    else:
-        await message.answer("❌ Ошибка привязки аккаунта.", reply_markup=get_main_keyboard(user_id, message.chat.id))
     
 
 

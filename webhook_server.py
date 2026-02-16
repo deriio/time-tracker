@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 from sheets_manager import GoogleSheetManager
+from validators import validate_webapp_data
 
 # Load environment
 load_dotenv()
@@ -34,26 +35,9 @@ from urllib.parse import parse_qs
 
 # --- Security: Telegram WebApp Validation ---
 def verify_telegram_data(init_data: str) -> dict:
-    """Validates data received from Telegram WebApp via HMAC-SHA256."""
-    if not init_data: return {}
-    try:
-        vals = {k: v[0] for k, v in parse_qs(init_data).items()}
-        hash_val = vals.pop('hash', None)
-        if not hash_val: return {}
-        
-        data_check_string = "\n".join([f"{k}={v}" for k, v in sorted(vals.items())])
-        
-        # HMAC secret is derived from bot token
-        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
-        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-        
-        if calculated_hash != hash_val:
-            logger.error("Security Warning: Unauthorized access attempt with invalid hash.")
-            return {}
-        return json.loads(vals.get('user', '{}'))
-    except Exception as e:
-        logger.error(f"Telegram validation error: {e}")
-        return {}
+    """Validates data received from Telegram WebApp using shared logic."""
+    user_info = validate_webapp_data(init_data, BOT_TOKEN)
+    return user_info if user_info is not None else {}
 
 def get_verified_id(request_data: dict, headers: dict = None) -> str:
     """Helper to extract secure ID from JSON body OR headers."""
@@ -186,7 +170,6 @@ async def handle_checkin(request: Request):
     try:
         data = await request.json()
         
-        # Priority to verified cryptographic ID (Body or Headers)
         v_id = get_verified_id(data, headers=request.headers)
         user_id = v_id if v_id else str(data.get("user_id"))
         
@@ -197,115 +180,93 @@ async def handle_checkin(request: Request):
         photo_b64 = data.get("photo")
         group_id = data.get("group_id")
         action = data.get("action")
-        target_info = data.get("target_user_id") # Explicit target (supervisor mode)
-        employee_name = data.get("employee_name") # Fallback
-        target_info = data.get("target_user_id") # Present if supervisor
-        
+        target_info = data.get("target_user_id") 
+        employee_name = data.get("employee_name") 
+
         logger.info(f"Identity check: user_id={user_id}, action={action}, target={target_info}")
 
         if not photo_b64:
-            return {"ok": False, "error": "No photo"}
+            return {"ok": False, "error": "No photo provided"}
 
-        # 1. Fetch user records for identification
+        # 1. Fetch user records and identify target
         users = sheet_manager.get_users_v2()
-        
-        # 2. Identify Target Employee & Team Info
-        final_employee_name = None
-        target_tg_id = None
-        user_team = "Цех" # Default
-        user_dept = ""
+        target_user = None
         
         if target_info:
-            # Supervisor mode: target_info is the Name of the employee selected
-            final_employee_name = target_info
-            t_user = next((u for u in users if u["name"] == final_employee_name), None)
-            if t_user:
-                target_tg_id = t_user["tg_id"]
-                user_team = t_user.get("team", "Цех")
-                user_dept = t_user.get("department", "")
+            # Supervisor mode: target_info is the Name
+            target_user = next((u for u in users if u["name"] == target_info), None)
         else:
-            # Self mode: Prioritize ID lookup
-            u_user = next((u for u in users if str(u["tg_id"]) == user_id), None)
-            if u_user:
-                final_employee_name = u_user["name"]
-                target_tg_id = user_id
-                user_team = u_user.get("team", "Цех")
-                user_dept = u_user.get("department", "")
-            else:
-                # Fallback to name from request
-                final_employee_name = employee_name or "Сотрудник"
-                target_tg_id = user_id
+            # Self mode: ID lookup
+            target_user = next((u for u in users if str(u["tg_id"]) == user_id), None)
 
-        # 3. Identify Submitter
+        if not target_user:
+            # Last resort fallback (e.g. fresh user not yet in sheets but with name from req)
+            final_employee_name = target_info or employee_name or "Сотрудник"
+            target_tg_id = user_id if not target_info else ""
+            user_team = "Цех"
+            user_dept = ""
+        else:
+            final_employee_name = target_user["name"]
+            target_tg_id = target_user["tg_id"]
+            user_team = target_user.get("team", "Цех")
+            user_dept = target_user.get("department", "")
+
+        # 2. Identify Submitter
         submitted_by = ""
         if target_info:
-            s_user = next((u for u in users if str(u["tg_id"]) == user_id), None)
-            submitted_by = s_user["name"] if s_user else f"ID:{user_id}"
+            submitter = next((u for u in users if str(u["tg_id"]) == user_id), None)
+            submitted_by = submitter["name"] if submitter else f"ID:{user_id}"
 
-        # 4. Log to Google Sheets
+        # 3. Log to Google Sheets
+        log_type = "Приход" if action == "check_in" else "Уход"
         try:
-            log_type = "Приход" if action == "check_in" else "Уход"
+            # Atomic append helps avoid race conditions
             sheet_manager.append_log(
                 user_name=final_employee_name,
                 telegram_id=target_tg_id or user_id,
                 log_type=log_type,
-                photo_url="-",
+                photo_url="-", # Photo is sent directly to TG, not stored in sheets currently
                 submitted_by=submitted_by,
                 team=user_team
             )
         except Exception as e_sheet:
-            logger.error(f"Sheet log failed: {e_sheet}")
+            logger.error(f"Sheet write failed: {e_sheet}")
+            return {"ok": False, "error": "Ошибка записи в таблицу. Мы сохраняем данные, попробуйте еще раз."}
 
-        # 5. Route Report to Correct Telegram Group
+        # 4. Route Report to Correct Telegram Group
         from datetime import datetime
         now_time = datetime.now().strftime("%H:%M")
         status_emoji = "🟢" if action == "check_in" else "🔴"
         status_text = "НАЧАЛ РАБОТУ" if action == "check_in" else "ЗАКОНЧИЛ РАБОТУ"
         
-        # Add Hashtags for Office team
         hashtag = ""
         if user_team == "Офис" and user_dept:
-            clean_dept = user_dept.strip().lower().replace(" ", "_")
-            hashtag = f" #{clean_dept}"
+            hashtag = f" #{user_dept.strip().lower().replace(' ', '_')}"
         
         caption = f"{status_emoji} **{final_employee_name}** {status_text}{hashtag}\n🕒 Время: {now_time}"
         if submitted_by:
             caption += f"\n✅ Подтвердил бригадир: {submitted_by}"
 
-        # Determine target group ID from .env
-        team_lower = str(user_team).lower().strip()
-        env_suffix = "WORKSHOP" if team_lower == "цех" else "OFFICE"
+        team_settings = sheet_manager.get_team_settings(user_team)
+        target_group = team_settings["group_id"] or group_id or user_id
         
-        env_var_name = f"{env_suffix}_GROUP_ID"
-        env_group_id = os.getenv(env_var_name)
-        target_group = env_group_id or group_id or user_id
-        
-        logger.info(f"Routing debug: team='{user_team}', lower='{team_lower}', env_var='{env_var_name}', env_val='{env_group_id}', final_target='{target_group}'")
-
-
         async with httpx.AsyncClient() as client:
             photo_bytes = base64.b64decode(photo_b64)
             files = {'photo': ('photo.jpg', photo_bytes, 'image/jpeg')}
-            payload = {
-                'chat_id': target_group, 
-                'caption': caption,
-                'parse_mode': 'Markdown'
-            }
             tg_resp = await client.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-                data=payload,
+                data={'chat_id': target_group, 'caption': caption, 'parse_mode': 'Markdown'},
                 files=files,
                 timeout=30.0
             )
-            
             if tg_resp.status_code != 200:
-                logger.error(f"Telegram API Error: {tg_resp.text}")
-                return {"ok": True, "warning": "Log saved, but Telegram delivery failed"}
+                logger.error(f"TG delivery failed: {tg_resp.text}")
+                return {"ok": True, "warning": "Success, but notification failed"}
 
         return {"ok": True}
 
     except Exception as e:
-        logger.error(f"Critical error in handle_checkin: {e}")
+        logger.error(f"Critical error in checkin: {e}")
         return {"ok": False, "error": str(e)}
 
 @app.post("/api/claim")
