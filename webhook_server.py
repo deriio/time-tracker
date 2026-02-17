@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 from sheets_manager import GoogleSheetManager
 from validators import validate_webapp_data
@@ -219,7 +218,7 @@ async def handle_checkin(request: Request):
         photo_b64 = data.get("photo")
         group_id = data.get("group_id")
         action = data.get("action")
-<<<<<<< HEAD
+        
         target_info = data.get("target_user_id") # Explicit target (supervisor mode)
         employee_name = data.get("employee_name") # Fallback
         
@@ -228,12 +227,6 @@ async def handle_checkin(request: Request):
         request_dept = data.get("department")
         
         logger.info(f"Identity check: user_id={user_id}, action={action}, target={target_info}, req_team={request_team}")
-=======
-        target_info = data.get("target_user_id") 
-        employee_name = data.get("employee_name") 
-
-        logger.info(f"Identity check: user_id={user_id}, action={action}, target={target_info}")
->>>>>>> cleanup-refactor
 
         if not photo_b64:
             return {"ok": False, "error": "No photo provided"}
@@ -246,7 +239,6 @@ async def handle_checkin(request: Request):
             # Supervisor mode: target_info is the Name
             target_user = next((u for u in users if u["name"] == target_info), None)
         else:
-<<<<<<< HEAD
             # Self mode: Prioritize ID lookup
             u_user = next((u for u in users if str(u["tg_id"]) == user_id), None)
             if u_user:
@@ -261,10 +253,6 @@ async def handle_checkin(request: Request):
                 user_team = request_team or "Цех"
                 user_dept = request_dept or ""
                 logger.warning(f"User {user_id} not found in DB. Using request data: team={user_team}, dept={user_dept}")
-=======
-            # Self mode: ID lookup
-            target_user = next((u for u in users if str(u["tg_id"]) == user_id), None)
->>>>>>> cleanup-refactor
 
         if not target_user:
             # Last resort fallback (e.g. fresh user not yet in sheets but with name from req)
@@ -306,7 +294,6 @@ async def handle_checkin(request: Request):
         status_emoji = "🟢" if action == "check_in" else "🔴"
         status_text = "НАЧАЛ РАБОТУ" if action == "check_in" else "ЗАКОНЧИЛ РАБОТУ"
         
-<<<<<<< HEAD
         # Add Hashtags for Office-style teams (Robust check)
         hashtag = ""
         team_lower = str(user_team).lower().strip()
@@ -326,51 +313,24 @@ async def handle_checkin(request: Request):
                     hashtag += f" #{clean_dept}"
             
             logger.info(f"Hashtags generated: {hashtag} for {final_employee_name}")
-=======
-        hashtag = ""
-        if user_team == "Офис" and user_dept:
-            hashtag = f" #{user_dept.strip().lower().replace(' ', '_')}"
->>>>>>> cleanup-refactor
         
         caption = f"{status_emoji} <b>{final_employee_name}</b> {status_text}{hashtag}\n🕒 Время: {now_time}"
         if submitted_by:
             caption += f"\n✅ Подтвердил бригадир: {submitted_by}"
 
-<<<<<<< HEAD
-        # Determine target group ID from .env
-        groups_mapping = {
-            "цех": os.getenv("WORKSHOP_GROUP_ID"),
-            "офис": os.getenv("OFFICE_GROUP_ID"),
-            "цех(офис)": os.getenv("CEH_OFFICE_GROUP_ID"),
-            "ташкент(офис)": os.getenv("TASHKENT_GROUP_ID")
-        }
-        
-        env_group_id = groups_mapping.get(team_lower)
-        target_group = env_group_id or group_id or user_id
-
-        
-        logger.info(f"Routing debug: team='{user_team}', lower='{team_lower}', env_val='{env_group_id}', final_target='{target_group}'")
-
-
-        async with httpx.AsyncClient() as client:
-            photo_bytes = base64.b64decode(photo_b64)
-            files = {'photo': ('photo.jpg', photo_bytes, 'image/jpeg')}
-            payload = {
-                'chat_id': target_group, 
-                'caption': caption,
-                'parse_mode': 'HTML'
-            }
-=======
+        # Determine target group ID via sheets_manager logic (centralized)
         team_settings = sheet_manager.get_team_settings(user_team)
         target_group = team_settings["group_id"] or group_id or user_id
         
+        logger.info(f"Routing: team='{user_team}' -> group='{target_group}'")
+
         async with httpx.AsyncClient() as client:
             photo_bytes = base64.b64decode(photo_b64)
             files = {'photo': ('photo.jpg', photo_bytes, 'image/jpeg')}
->>>>>>> cleanup-refactor
+            
             tg_resp = await client.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-                data={'chat_id': target_group, 'caption': caption, 'parse_mode': 'Markdown'},
+                data={'chat_id': target_group, 'caption': caption, 'parse_mode': 'HTML'},
                 files=files,
                 timeout=30.0
             )
