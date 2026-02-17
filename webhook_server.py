@@ -240,7 +240,9 @@ async def handle_checkin(request: Request):
             target_user = next((u for u in users if u["name"] == target_info), None)
         else:
             # Self mode: Prioritize ID lookup
-            u_user = next((u for u in users if str(u["tg_id"]) == user_id), None)
+            # Debug user lookup
+            logger.info(f"Looking for user_id='{user_id}' in {len(users)} users")
+            u_user = next((u for u in users if str(u.get("tg_id", "")).strip() == str(user_id).strip()), None)
             if u_user:
                 final_employee_name = u_user["name"]
                 target_tg_id = user_id
