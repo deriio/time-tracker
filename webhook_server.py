@@ -243,19 +243,20 @@ async def handle_checkin(request: Request):
             # Debug user lookup
             logger.info(f"Looking for user_id='{user_id}' in {len(users)} users")
             u_user = next((u for u in users if str(u.get("tg_id", "")).strip() == str(user_id).strip()), None)
+            
             if u_user:
                 logger.info(f"User FOUND in cache: {u_user.get('name')} Team: '{u_user.get('team')}'")
-                final_employee_name = u_user["name"]
-                target_tg_id = user_id
-                user_team = u_user.get("team", "Цех")
-                user_dept = u_user.get("department", "")
+                target_user = u_user
             else:
                 # FIXED: Fallback now uses team/dept from request instead of default
-                final_employee_name = employee_name or "Сотрудник"
-                target_tg_id = user_id
-                user_team = request_team or "Цех"
-                user_dept = request_dept or ""
-                logger.warning(f"User {user_id} not found in DB. Using request data: team={user_team}, dept={user_dept}")
+                logger.warning(f"User {user_id} not found in DB. Using request data: team={request_team}, dept={request_dept}")
+                target_user = {
+                    "name": employee_name or "Сотрудник",
+                    "tg_id": user_id,
+                    "team": request_team or "Цех",
+                    "department": request_dept or "",
+                    "role": "employee"
+                }
 
         if not target_user:
             # Last resort fallback (e.g. fresh user not yet in sheets but with name from req)
