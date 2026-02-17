@@ -244,6 +244,7 @@ async def handle_checkin(request: Request):
             logger.info(f"Looking for user_id='{user_id}' in {len(users)} users")
             u_user = next((u for u in users if str(u.get("tg_id", "")).strip() == str(user_id).strip()), None)
             if u_user:
+                logger.info(f"User FOUND in cache: {u_user.get('name')} Team: '{u_user.get('team')}'")
                 final_employee_name = u_user["name"]
                 target_tg_id = user_id
                 user_team = u_user.get("team", "Цех")
