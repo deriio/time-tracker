@@ -120,7 +120,7 @@ async def get_config(request: Request):
         v_id = get_verified_id({}, headers=request.headers)
         logger.info(f"Config request from securely verified ID: {v_id}")
         
-        users_v2 = sheet_manager.get_users_v2()
+        users_v2 = sheet_manager.get_users_v2(use_cache=True)
         
         # 1. Compact Active Users: [id, name, role_char, team, department]
         active_users = []
@@ -232,7 +232,7 @@ async def handle_checkin(request: Request):
             return {"ok": False, "error": "No photo provided"}
 
         # 1. Fetch user records and identify target
-        users = sheet_manager.get_users_v2()
+        users = sheet_manager.get_users_v2(use_cache=True)
         target_user = None
         
         if target_info:
@@ -368,7 +368,7 @@ async def handle_claim(request: Request):
             # API Consistency: ensure we return 'name' to the frontend
             role = "employee"
             try:
-                users = sheet_manager.get_users_v2()
+                users = sheet_manager.get_users_v2(use_cache=True)
                 user_record = next((u for u in users if str(u['tg_id']) == str(user_id)), None)
                 if user_record:
                     role = user_record['role']

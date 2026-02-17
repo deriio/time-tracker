@@ -57,11 +57,11 @@ USER_CACHE_UNAME = {} # Normalized Username -> Full Name
 ALL_NAMES_SET = set() # Set of all valid names
 
 # Initial Cache Load Helper
-def refresh_user_cache():
+def refresh_user_cache(force_refresh=False):
     global USER_CACHE_ID, USER_CACHE_UNAME, ALL_NAMES_SET
     try:
-        logger.info("Refreshing user cache from Google Sheet...")
-        users_v2 = sheet_manager.get_users_v2()
+        logger.info(f"Refreshing user cache (Force={force_refresh})...")
+        users_v2 = sheet_manager.get_users_v2(use_cache=not force_refresh)
         
         # New cache structure: store full user objects
         USER_CACHE_ID = {str(u["tg_id"]): u for u in users_v2 if u["tg_id"]}
@@ -164,7 +164,7 @@ async def handle_update(message: Message):
     
     status_msg = await message.reply("🔄 Обновление базы из таблиц...")
     
-    if refresh_user_cache():
+    if refresh_user_cache(force_refresh=True):
         try:
             users_list = sheet_manager.get_users_v2()
             sync_result = sheet_manager.sync_users_to_current_month(users_list)

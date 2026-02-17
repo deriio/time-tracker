@@ -27,6 +27,8 @@ class GoogleSheetManager:
 
     # Define Team Configurations as Single Source of Truth
     # Order matters for partial matching in get_team_settings
+    CACHE_FILE = "users_cache.json"
+
     TEAM_CONFIGS = [
         {
             "match_key": "ташкент",       # ← lowercase! get_team_settings() does .lower()
@@ -127,16 +129,19 @@ class GoogleSheetManager:
             "name": "Цех"
         }
 
-    def get_users_v2(self):
+    def get_users_v2(self, use_cache=True):
         """
-        Reads users from Config_Users with columns:
-        A: Name, B: Username, C: Telegram ID, D: Role, E: Team, F: Department, G: Status
-        Actually headers say: 
-        1: Name, 2: Username, 3: ID, 4: Role, 5: Team, 6: Department
-        Let's assume G is status or we use Role/Department to deduce. 
-        User said status is after. Let's read A:G.
+        Reads users from Cache (default) or Config_Users.
+        Returns list of dicts: {name, username, tg_id, role, team, department, status}
         """
+        if use_cache:
+            cached_data = self.load_cache()
+            if cached_data:
+                return cached_data
+
+        # Fallback to fetching from Sheets if cache is empty or use_cache=False
         import time
+        logger.info("Fetching users from Google Sheets...")
         for attempt in range(3):
             try:
                 sheet = self.gc.open_by_key(self.template_file_id)
@@ -158,12 +163,40 @@ class GoogleSheetManager:
                             "department": row[5].strip() if len(row) > 5 else "",
                             "status": row[6].strip().lower() if len(row) > 6 else "active"
                         })
+                self.update_cache(users)
                 return users
             except Exception as e:
                 logger.warning(f"Attempt {attempt+1} failed to load users: {e}")
                 if attempt == 2: return []
                 time.sleep(1)
-        return []
+        
+        # If fetch fails, try to load stale cache as last resort
+        logger.error("Failed to fetch from Sheets after retries. Trying fallback to cache.")
+        return self.load_cache() or []
+
+    def update_cache(self, users):
+        """Saves user list to local JSON file."""
+        import json
+        try:
+            with open(self.CACHE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(users, f, ensure_ascii=False, indent=2)
+            logger.info(f"User cache updated: {len(users)} records saved to {self.CACHE_FILE}")
+        except Exception as e:
+            logger.error(f"Failed to write cache: {e}")
+
+    def load_cache(self):
+        """Loads user list from local JSON file."""
+        import json
+        if not os.path.exists(self.CACHE_FILE):
+            return None
+        try:
+            with open(self.CACHE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            logger.info(f"Loaded {len(data)} users from local cache.")
+            return data
+        except Exception as e:
+            logger.error(f"Failed to read cache: {e}")
+            return None
 
     def find_user(self, tg_id: str = None, username: str = None):
         """Finds active user by ID or Normalized Username."""
