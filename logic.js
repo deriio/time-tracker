@@ -440,7 +440,9 @@ async function submitData(action, targetId = null, btn = null) {
             user_id: state.user.id,
             group_id: state.groupId,
             employee_name: (state.role === 'supervisor') ? "" : state.employeeName,
-            target_user_id: (state.role === 'supervisor') ? state.targetUserId : ""
+            target_user_id: (state.role === 'supervisor') ? state.targetUserId : "",
+            team: state.team,
+            department: state.department
         };
 
         if (!state.apiUrl) {
