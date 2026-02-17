@@ -29,13 +29,13 @@ class GoogleSheetManager:
     # Order matters for partial matching in get_team_settings
     TEAM_CONFIGS = [
         {
-            "match_key": "Ташкент(офис)",
+            "match_key": "ташкент",       # ← lowercase! get_team_settings() does .lower()
             "name": "Ташкент(офис)",
             "folder_env": "TASHKENT_FOLDER_ID", 
             "group_env": "TASHKENT_GROUP_ID"
         },
         {
-            "match_key": "Цех(офис)",
+            "match_key": "цех(офис)",     # ← lowercase! must come BEFORE generic "цех"
             "name": "Цех(офис)",
             "folder_env": "CEH_OFFICE_FOLDER_ID", 
             "group_env": "CEH_OFFICE_GROUP_ID"
