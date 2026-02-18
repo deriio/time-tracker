@@ -248,15 +248,31 @@ async def handle_checkin(request: Request):
                 logger.info(f"User FOUND in cache: {u_user.get('name')} Team: '{u_user.get('team')}'")
                 target_user = u_user
             else:
-                # FIXED: Fallback now uses team/dept from request instead of default
-                logger.warning(f"User {user_id} not found in DB. Using request data: team={request_team}, dept={request_dept}")
-                target_user = {
-                    "name": employee_name or "Сотрудник",
-                    "tg_id": user_id,
-                    "team": request_team or "Цех",
-                    "department": request_dept or "",
-                    "role": "employee"
-                }
+                # Fallback: Try to find by Username securely
+                # If cache is slightly stale (has name/username but no ID yet), we can match by username
+                try:
+                    init_data_raw = data.get("_initData") or request.headers.get("X-Telegram-Init-Data")
+                    if init_data_raw:
+                        v_info = verify_telegram_data(init_data_raw)
+                        if v_info and v_info.get("username"):
+                            u_name_search = sheet_manager.normalize_username(v_info["username"])
+                            u_user = next((u for u in users if sheet_manager.normalize_username(u.get("username")) == u_name_search), None)
+                            if u_user:
+                                logger.info(f"Fallback: User FOUND by username @{u_name_search}")
+                                target_user = u_user
+                except Exception as ex_fb:
+                    logger.warning(f"Fallback username check failed: {ex_fb}")
+
+                if not target_user:
+                    # FIXED: Fallback now uses team/dept from request instead of default
+                    logger.warning(f"User {user_id} not found in DB. Using request data: team={request_team}, dept={request_dept}")
+                    target_user = {
+                        "name": employee_name or "Сотрудник",
+                        "tg_id": user_id,
+                        "team": request_team or "Цех",
+                        "department": request_dept or "",
+                        "role": "employee"
+                    }
 
         if not target_user:
             # Last resort fallback (e.g. fresh user not yet in sheets but with name from req)

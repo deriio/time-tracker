@@ -237,6 +237,9 @@ class GoogleSheetManager:
                     wks.update_cell(idx + 1, 3, str(tg_id))
                     logger.info(f"SUCCESS: Auto-bound ID {tg_id} to @{norm_search}")
                     
+                    # Force update local cache so Webhook Server sees it immediately
+                    self.get_users_v2(use_cache=False)
+                    
                     return {
                         "name": row[0].strip(),
                         "username": row_username,
@@ -339,6 +342,9 @@ class GoogleSheetManager:
             
             # Immediately add to current month report if it exists
             self.add_user_to_current_month(full_name)
+            
+            # Force update local cache
+            self.get_users_v2(use_cache=False)
             return True
         except Exception as e:
             logger.error(f"Failed to add user: {e}")
