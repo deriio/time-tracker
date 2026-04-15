@@ -21,6 +21,7 @@ GOOGLE_JSON_PATH = os.getenv("GOOGLE_JSON_PATH")
 DRIVE_FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
 TEMPLATE_FILE_ID = os.getenv("TEMPLATE_FILE_ID")
 WEBHOOK_SERVER_URL = os.getenv("WEBHOOK_SERVER_URL", "http://localhost:8000")
+TELEGRAM_API_BASE_URL = os.getenv("TELEGRAM_API_BASE_URL", "https://api.telegram.org").rstrip("/")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -349,7 +350,7 @@ async def handle_checkin(request: Request):
             files = {'photo': ('photo.jpg', photo_bytes, 'image/jpeg')}
             
             tg_resp = await client.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+                f"{TELEGRAM_API_BASE_URL}/bot{BOT_TOKEN}/sendPhoto",
                 data={'chat_id': target_group, 'caption': caption, 'parse_mode': 'HTML'},
                 files=files,
                 timeout=30.0
@@ -409,7 +410,7 @@ async def handle_claim(request: Request):
                     'parse_mode': 'HTML'
                 }
                 await client.post(
-                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                    f"{TELEGRAM_API_BASE_URL}/bot{BOT_TOKEN}/sendMessage",
                     data=payload,
                     timeout=10.0
                 )

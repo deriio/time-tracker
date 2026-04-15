@@ -5,6 +5,8 @@ import asyncio
 import httpx
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F, BaseMiddleware
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     Message, 
@@ -33,6 +35,7 @@ DRIVE_FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
 TEMPLATE_FILE_ID = os.getenv("TEMPLATE_FILE_ID")
 WEBAPP_URL = os.getenv("WEBAPP_URL")
 WEBHOOK_SERVER_URL = os.getenv("WEBHOOK_SERVER_URL", "http://localhost:8000")
+TELEGRAM_API_BASE_URL = os.getenv("TELEGRAM_API_BASE_URL", "https://api.telegram.org")
 
 # Admin IDs handling
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
@@ -148,7 +151,10 @@ class OuterLoggerMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 # Bot initialization
-bot = Bot(token=BOT_TOKEN)
+session = AiohttpSession(
+    api=TelegramAPIServer.from_base(TELEGRAM_API_BASE_URL)
+)
+bot = Bot(token=BOT_TOKEN, session=session)
 dp = Dispatcher()
 
 # Apply middleware
